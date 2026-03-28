@@ -4,197 +4,255 @@ import { RegimeFilter, shouldEnter, checkTrailingStop, getScaledConfig, calculat
 import STRATEGIES from './strategies/index';
 
 /**
- * Runs a high-fidelity backtest using historical price ticks.
- * @param symbol The trading pair (e.g. 'SOLUSDT')
- * @param strategyName The strategy key (e.g. 'SNIPER')
- * @param startTime ISO date string
- * @param endTime ISO date string
- * @param onProgress Callback for percentage updates
+ * Runs a high-fidelity chunked backtest using historical price ticks.
+ * Processes data in 4-hour segments to prevent memory overflow (OOM).
  */
-export async function runBacktest(symbol, strategyName, startTime, endTime, initialEquityArg, isDecoupled = false, onProgress) {
+export async function runBacktest(symbol, strategyName, startTime, endTime, initialEquityArg, isDecoupled = false, onUpdate) {
     const initialEquity = (isNaN(initialEquityArg) || initialEquityArg <= 0) ? 1000 : initialEquityArg;
-    console.log(`[BACKTEST] Starting simulation for ${symbol} using ${strategyName} (Equity: $${initialEquity})...`);
+    console.log(`[BACKTEST] Starting chunked simulation for ${symbol} using ${strategyName} (Equity: $${initialEquity})...`);
     
-    // 1. Fetch Tick History
-    const ticks = await getTickHistory(symbol, startTime, endTime);
-    if (ticks.length === 0) {
-        return { error: 'No live tick data found in the selected range.' };
-    }
-
-    const firstTick = ticks[0];
-    const lastTick = ticks[ticks.length - 1];
-    console.log(`[BACKTEST] Processing ${ticks.length.toLocaleString()} ticks from ${firstTick.recorded_at.toISOString()} to ${lastTick.recorded_at.toISOString()}`);
-
-    // 2. Initialize Simulated Environment
+    // 1. Initialize Simulated Environment (State lives across chunks)
     const filter = new RegimeFilter();
+    const btcFilter = new RegimeFilter();
     const strategyConfig = STRATEGIES[strategyName];
     if (!strategyConfig) return { error: `Strategy ${strategyName} not found.` };
 
-    let position = null; // { entryPrice, quantity, highWaterMark, entryTime }
+    let position = null; // { entryPrice, quantity, highWaterMark, entryTimestamp }
     const trades = [];
     let equity = initialEquity; 
+    let totalFeesPaid = 0;
+    const FEE_RATE = 0.001; // 0.1% fee (Binance standard)
     
-    // Tracking for the virtual 60-second boundary (mirrors evaluateEntries in bot.ts)
     const EVAL_INTERVAL_MS = 60 * 1000;
-    let lastEvalTime = firstTick.recorded_at.getTime();
+    let lastEvalTime = null;
     let consecutiveBulls = 0;
+    let btcIdx = 0;
+    
+    const startMs = new Date(startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    const CHUNK_MS = 4 * 60 * 60 * 1000; // 4 hour chunks
+    
+    // Dynamic sampling: aim for ~1500-2000 points across the whole range
+    const totalDurationMs = endMs - startMs;
+    const CHART_SAMPLE_INTERVAL_MS = Math.max(60000, Math.floor(totalDurationMs / 1500));
+    let lastChartSampleTime = 0;
+    
+    let ticksProcessed = 0;
+    let firstTick = null;
+    let lastTick = null;
+    const chartData = [];
 
-    // 3. Simulation Loop
-    for (let i = 0; i < ticks.length; i++) {
-        const tick = ticks[i];
-        const currentTime = tick.recorded_at.getTime();
-        
-        // Prevent blocking the event loop for too long on large datasets
-        if (i % 50000 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    // 2. Chunked Processing Loop
+    for (let currentMs = startMs; currentMs < endMs; currentMs += CHUNK_MS) {
+        const chunkEndMs = Math.min(currentMs + CHUNK_MS, endMs);
+        const chunkStart = new Date(currentMs).toISOString();
+        const chunkEnd = new Date(chunkEndMs).toISOString();
 
-        // Feed tick into the filter (mimics processTick)
-        // Note: For backtesting, we don't have cumulative dailyVolume here easily, 
-        // so we pass volume directly as directVolume.
-        filter.addTick(symbol, tick.price, 0, 14400, tick.volume);
+        // Fetch segment
+        const [ticks, btcTicks] = await Promise.all([
+            getTickHistory(symbol, chunkStart, chunkEnd),
+            getTickHistory('BTCUSDT', chunkStart, chunkEnd)
+        ]);
 
-        // --- EXIT LOGIC (Checked on every tick) ---
-        if (position) {
-            if (!strategyConfig) {
-                console.error(`[BT ERROR] Strategy config lost for ${symbol}`);
-                return { error: 'Simulation corrupted: Strategy config lost.' };
-            }
-            const exit = checkTrailingStop(tick.price, position.entryPrice, position.highWaterMark, 'BULL', strategyConfig);
-            if (exit && exit.shouldSell) {
-                // Execute Exit
-                const exitPrice = tick.price;
-                const pnl = (exitPrice - position.entryPrice) * position.quantity;
-                const roi = (exitPrice - position.entryPrice) / position.entryPrice;
-                
-                equity *= (1 + roi);
-
-                trades.push({
-                    symbol,
-                    side: 'SELL',
-                    price: exitPrice,
-                    quantity: position.quantity,
-                    entryPrice: position.entryPrice,
-                    pnl,
-                    roi,
-                    equity, // Tracking for chart
-                    reason: exit.reason || 'MANUAL',
-                    timestamp: tick.recorded_at.toISOString(),
-                    holdTime: (currentTime - position.entryTimestamp) / (60 * 1000) // minutes
-                });
-
-                console.log(`[BT SELL] ${symbol} @ $${exitPrice.toFixed(4)} | ROI: ${(roi * 100).toFixed(2)}% | Reason: ${exit.reason}`);
-                position = null;
-                consecutiveBulls = 0;
-            } else if (position) {
-                // Update HWM
-                position.highWaterMark = Math.max(position.highWaterMark, tick.price);
-            }
+        if (ticks.length > 0) {
+            if (!firstTick) firstTick = ticks[0];
+            lastTick = ticks[ticks.length - 1];
         }
+        btcIdx = 0; // Reset index for this btcTicks segment
 
-        // --- ENTRY LOGIC (Checked on 60s virtual boundaries) ---
-        if (currentTime - lastEvalTime >= EVAL_INTERVAL_MS) {
-            lastEvalTime = currentTime;
+        // 3. Simulation Loop for Chunk
+        for (let i = 0; i < ticks.length; i++) {
+            const tick = ticks[i];
+            const currentTime = tick.recorded_at.getTime();
+            
+            if (!lastEvalTime) lastEvalTime = currentTime;
 
-            // Report progress every 10 minutes of virtual time or so
-            if (onProgress && i % 5000 === 0) {
-                const progress = Math.round((i / ticks.length) * 100);
-                onProgress(progress);
+            // Prevent blocking
+            if (i % 20000 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+
+            // Feed coin filter
+            filter.addTick(symbol, tick.price, 0, 14400, tick.volume);
+
+            // Time-based sampling for chart to ensure full coverage
+            if (currentTime - lastChartSampleTime >= CHART_SAMPLE_INTERVAL_MS) {
+               chartData.push({ t: currentTime, p: tick.price });
+               lastChartSampleTime = currentTime;
             }
 
-            if (!position) {
-                const history = filter.getHistory(symbol);
-                if (history && history.length >= 60) {
-                    const lastPrice = history[history.length - 1].price;
-                    const { micro: regime, macro: macroRegime } = filter.getRegime(symbol, strategyConfig);
-                    const rsi5m = calculateRSI(history, 14, 300);
-                    const scaledConfig = getScaledConfig(symbol, history, strategyConfig);
+            // Sync BTC ticks in THIS chunk
+            while (btcIdx < btcTicks.length && btcTicks[btcIdx].recorded_at.getTime() <= currentTime) {
+                const bTick = btcTicks[btcIdx];
+                btcFilter.addTick('BTCUSDT', bTick.price, 0, 14400, bTick.volume);
+                btcIdx++;
+            }
 
-                    // Note: In backtest, we skip BTC Guard / Resistance for simplicity 
-                    // or we could mock them if the user had BTC ticks in the same period.
-                    // For now, let's assume valid macro condition.
-                    const entryCheck = shouldEnter(
-                        symbol, regime, false, 'BULL', 
-                        [{ symbol }], history, lastPrice, 
-                        0.01, scaledConfig, macroRegime, 
-                        isDecoupled, true, rsi5m, null
-                    );
+            // --- EXIT LOGIC ---
+            if (position) {
+                const exit = checkTrailingStop(tick.price, position.entryPrice, position.highWaterMark, 'BULL', strategyConfig);
+                if (exit && exit.shouldSell) {
+                    const exitPrice = tick.price;
+                    
+                    // Apply SELL fee
+                    const sellFee = (position.quantity * exitPrice) * FEE_RATE;
+                    totalFeesPaid += sellFee;
+                    
+                    const grossRoi = (exitPrice - position.entryPrice) / position.entryPrice;
+                    const grossPnl = grossRoi * (position.quantity * position.entryPrice);
+                    const netPnl = grossPnl - sellFee; 
+                    
+                    // Update equity with net result
+                    // Note: We already paid the BUY fee at entry, so we just add the price diff and subtract the sell fee
+                    equity = (equity + grossPnl) - sellFee;
 
-                    if (entryCheck === true) {
-                        consecutiveBulls++;
-                        if (consecutiveBulls >= 2) {
-                            // Execute Buy
-                            const quantity = initialEquity / lastPrice; // Use full initial budget per slot for simulation
-                            position = {
-                                entryPrice: lastPrice,
-                                quantity: quantity,
-                                highWaterMark: lastPrice,
-                                entryTimestamp: currentTime
-                            };
+                    trades.push({
+                        symbol,
+                        side: 'SELL',
+                        price: exitPrice,
+                        quantity: position.quantity,
+                        entryPrice: position.entryPrice,
+                        pnl: netPnl,
+                        roi: netPnl / (position.quantity * position.entryPrice),
+                        equity,
+                        fee: sellFee,
+                        reason: exit.reason || 'MANUAL',
+                        timestamp: tick.recorded_at.toISOString(),
+                        holdTime: (currentTime - position.entryTimestamp) / (60 * 1000)
+                    });
+                    position = null;
+                    consecutiveBulls = 0;
+                } else {
+                    position.highWaterMark = Math.max(position.highWaterMark, tick.price);
+                }
+            }
 
-                            trades.push({
-                                symbol,
-                                side: 'BUY',
-                                price: lastPrice,
-                                quantity,
-                                equity, // Tracking for chart
-                                timestamp: tick.recorded_at.toISOString(),
-                                reason: 'SIGNAL'
-                            });
-                            console.log(`[BT BUY] ${symbol} @ $${lastPrice.toFixed(4)}`);
+            // --- ENTRY LOGIC ---
+            if (currentTime - lastEvalTime >= EVAL_INTERVAL_MS) {
+                lastEvalTime = currentTime;
+
+                if (!position) {
+                    const history = filter.getHistory(symbol);
+                    if (history && history.length >= 60) {
+                        const lastPrice = history[history.length - 1].price;
+                        const { micro: regime, macro: macroRegime } = filter.getRegime(symbol, strategyConfig);
+                        const rsi5m = calculateRSI(history, 14, 300);
+                        const scaledConfig = getScaledConfig(symbol, history, strategyConfig);
+
+                        const { micro: btcRegime, macroDiff: btcMacroDiff } = btcFilter.getRegime('BTCUSDT', STRATEGIES.SNIPER);
+
+                        const entryCheck = shouldEnter(
+                            symbol, regime, false, btcRegime, 
+                            [{ symbol }], history, lastPrice, 
+                            btcMacroDiff || 0, scaledConfig, macroRegime, 
+                            isDecoupled, true, rsi5m, null
+                        );
+
+                        if (entryCheck === true) {
+                            consecutiveBulls++;
+                            if (consecutiveBulls >= 2) {
+                                // Assume 1000 USDT per trade (or current equity if less)
+                                const tradeValue = Math.min(1000, equity);
+                                
+                                // Apply BUY fee immediately
+                                const buyFee = tradeValue * FEE_RATE;
+                                totalFeesPaid += buyFee;
+                                equity -= buyFee;
+
+                                const quantity = tradeValue / lastPrice;
+                                position = {
+                                    entryPrice: lastPrice,
+                                    quantity: quantity,
+                                    highWaterMark: lastPrice,
+                                    entryTimestamp: currentTime
+                                };
+
+                                trades.push({
+                                    symbol,
+                                    side: 'BUY',
+                                    price: lastPrice,
+                                    quantity,
+                                    equity,
+                                    fee: buyFee,
+                                    timestamp: tick.recorded_at.toISOString(),
+                                    reason: 'SIGNAL'
+                                });
+                            }
+                        } else {
+                            consecutiveBulls = 0;
                         }
-                    } else {
-                        consecutiveBulls = 0;
                     }
                 }
             }
         }
+        ticksProcessed += ticks.length;
+
+        // --- Interim Stream Update ---
+        if (onUpdate && firstTick) {
+            const progress = Math.round(((currentMs - startMs) / (endMs - startMs)) * 100);
+            
+            // Calculate interim stats
+            const sellTrades = trades.filter(t => t.side === 'SELL');
+            const wins = sellTrades.filter(t => t.pnl > 0).length;
+            const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
+
+            let currentUnrealizedRoi = 0;
+            if (position && lastTick) {
+                currentUnrealizedRoi = (lastTick.price - position.entryPrice) / position.entryPrice;
+            }
+            const currentFinalEquity = equity * (1 + currentUnrealizedRoi);
+
+            onUpdate(progress, {
+                symbol,
+                strategy: strategyName,
+                totalTrades: sellTrades.length,
+                winRate,
+                finalEquity: currentFinalEquity,
+                totalFees: totalFeesPaid,
+                totalPnl: currentFinalEquity - initialEquity,
+                totalRoi: (currentFinalEquity - initialEquity) / initialEquity,
+                trades: [...trades],
+                chartData: [...chartData],
+                range: {
+                    start: firstTick.recorded_at.toISOString(),
+                    end: lastTick.recorded_at.toISOString(),
+                    ticksProcessed
+                }
+            });
+        }
     }
 
-    // 4. Calculate Final Stats
-    const sellTrades = trades.filter(t => t.side === 'SELL');
-    const realizedPnl = sellTrades.reduce((sum, t) => sum + t.pnl, 0);
-    const realizedRoi = sellTrades.length > 0 ? sellTrades.reduce((sum, t) => sum + t.roi, 0) / sellTrades.length : 0;
+    if (!firstTick) {
+        return { error: 'No live tick data found in the selected range.' };
+    }
+
+    // 4. Final Calculation
+    const finalSellTrades = trades.filter(t => t.side === 'SELL');
+    const finalWins = finalSellTrades.filter(t => t.pnl > 0).length;
+    const finalWinRate = finalSellTrades.length > 0 ? (finalWins / finalSellTrades.length) * 100 : 0;
     
-    let unrealizedPnl = 0;
-    let unrealizedRoi = 0;
-    let hasOpenPosition = false;
-
-    if (position && position.entryPrice > 0) {
-        const lastTickPrice = ticks[ticks.length - 1].price;
-        unrealizedPnl = (lastTickPrice - position.entryPrice) * position.quantity;
-        unrealizedRoi = (lastTickPrice - position.entryPrice) / position.entryPrice;
-        hasOpenPosition = true;
+    let finalUnrealizedRoi = 0;
+    if (position && lastTick) {
+        finalUnrealizedRoi = (lastTick.price - position.entryPrice) / position.entryPrice;
     }
-
-    const wins = sellTrades.filter(t => t.pnl > 0).length;
-    const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
-
-    // 5. Sample Tick History for Charting (Max 1000 points)
-    const sampleRate = Math.max(1, Math.floor(ticks.length / 1000));
-    const chartData = [];
-    for (let i = 0; i < ticks.length; i += sampleRate) {
-        chartData.push({ t: ticks[i].recorded_at.getTime(), p: ticks[i].price });
-    }
-
-        const finalOpenEquity = isFinite(equity * (1 + (hasOpenPosition ? unrealizedRoi : 0))) ? (equity * (1 + (hasOpenPosition ? unrealizedRoi : 0))) : equity;
+    const absoluteFinalEquity = equity * (1 + finalUnrealizedRoi);
     
-    return {
+    const results = {
         symbol,
         strategy: strategyName,
-        totalTrades: sellTrades.length,
-        winRate,
-        avgRoi: realizedRoi,
-        realizedPnl,
-        unrealizedPnl,
-        unrealizedRoi,
-        hasOpenPosition,
-        finalEquity: finalOpenEquity,
-        totalPnl: finalOpenEquity - initialEquity,
-        totalRoi: (finalOpenEquity - initialEquity) / initialEquity,
+        totalTrades: finalSellTrades.length,
+        winRate: finalWinRate,
+        finalEquity: absoluteFinalEquity,
+        totalFees: totalFeesPaid,
+        totalPnl: absoluteFinalEquity - initialEquity,
+        totalRoi: (absoluteFinalEquity - initialEquity) / initialEquity,
         trades: trades,
-        chartData,         range: {
+        chartData: chartData,
+        range: {
             start: firstTick.recorded_at.toISOString(),
             end: lastTick.recorded_at.toISOString(),
-            ticksProcessed: ticks.length
+            ticksProcessed
         }
     };
+
+    if (onUpdate) onUpdate(100, results);
+    return results;
 }

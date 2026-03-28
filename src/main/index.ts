@@ -1,8 +1,9 @@
 // Filter Binance PING/PONG logs that clutter the terminal
 // This is placed at the top to ensure it's active before other modules are imported.
-const filterBinanceHeartbeats = (method: string): void => {
+const filterBinanceHeartbeats = (method: 'log' | 'info' | 'warn' | 'debug'): void => {
   const original = console[method]
-  console[method] = (...args: any[]): void => {
+  // @ts-ignore - overriding built-in console methods
+  console[method] = (...args: unknown[]): void => {
     const msg = args.map((arg) => String(arg)).join(' ')
     if (
       msg.includes('Received PING from server') ||
@@ -12,15 +13,19 @@ const filterBinanceHeartbeats = (method: string): void => {
     ) {
       return
     }
-    original.apply(console, args)
+    original.apply(console, args as any[])
   }
 }
-;['log', 'info', 'warn', 'debug'].forEach(filterBinanceHeartbeats)
+;(['log', 'info', 'warn', 'debug'] as const).forEach(filterBinanceHeartbeats)
 
 // Also wrap process.stdout.write as some libraries bypass console
 const originalStdoutWrite = process.stdout.write.bind(process.stdout)
 // @ts-ignore - wrapping native method
-process.stdout.write = (chunk: string | Uint8Array, encoding?: BufferEncoding | ((error: Error | null | undefined) => void), callback?: (error: Error | null | undefined) => void): boolean => {
+process.stdout.write = (
+  chunk: string | Uint8Array,
+  encoding?: BufferEncoding | ((error: Error | null | undefined) => void),
+  callback?: (error: Error | null | undefined) => void
+): boolean => {
   const msg = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
   if (
     msg.includes('Received PING from server') ||
@@ -28,12 +33,16 @@ process.stdout.write = (chunk: string | Uint8Array, encoding?: BufferEncoding | 
   ) {
     return true
   }
-  return originalStdoutWrite(chunk, encoding as any, callback)
+  return originalStdoutWrite(chunk, encoding as BufferEncoding, callback)
 }
 
 const originalStderrWrite = process.stderr.write.bind(process.stderr)
 // @ts-ignore - wrapping native method
-process.stderr.write = (chunk: string | Uint8Array, encoding?: BufferEncoding | ((error: Error | null | undefined) => void), callback?: (error: Error | null | undefined) => void): boolean => {
+process.stderr.write = (
+  chunk: string | Uint8Array,
+  encoding?: BufferEncoding | ((error: Error | null | undefined) => void),
+  callback?: (error: Error | null | undefined) => void
+): boolean => {
   const msg = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
   if (
     msg.includes('Received PING from server') ||
@@ -41,7 +50,7 @@ process.stderr.write = (chunk: string | Uint8Array, encoding?: BufferEncoding | 
   ) {
     return true
   }
-  return originalStderrWrite(chunk, encoding as any, callback)
+  return originalStderrWrite(chunk, encoding as BufferEncoding, callback)
 }
 
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
@@ -53,7 +62,7 @@ import { botEvents, startBot, executeManualTrade, reloadWhitelist, updateSetting
 import { getWhitelist, updateWhitelist, getSettings, updateSetting, getDecoupledWhitelist, updateDecoupledWhitelist, getMetrics, getRecentTrades } from './db'
 import { runBacktest } from './backtest'
 
-function createWindow(settings: any): void {
+function createWindow(settings: Record<string, string>): void {
   let windowState = { width: 900, height: 670, x: undefined, y: undefined, isMaximized: false };
   try {
     if (settings.window_state) {
@@ -87,7 +96,7 @@ function createWindow(settings: any): void {
   })
 
   // Debounced Window State Save
-  let saveTimeout: any;
+  let saveTimeout: NodeJS.Timeout | undefined;
   const saveWindowState = () => {
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(async () => {
@@ -108,7 +117,7 @@ function createWindow(settings: any): void {
   mainWindow.on('move', saveWindowState);
 
   // Listen to bot events and forward to renderer
-  const forwardEvent = (channel: string) => (data: any) => {
+  const forwardEvent = (channel: string) => (data: unknown) => {
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.send(channel, data)
     }
@@ -161,14 +170,20 @@ app.whenReady().then(async () => {
   })
 
   // IPC bot hooks - Defensive registration to prevent "second handler" errors during HMR
-  const handleIPC = (channel, handler) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleIPC = (channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any): void => {
     ipcMain.removeHandler(channel)
     ipcMain.handle(channel, handler)
   }
 
   handleIPC('bot:start', async () => startBot())
-  handleIPC('bot:runBacktest', async (_, symbol, strategy, start, end, initialEquity, isDecoupled) => {
-    return await runBacktest(symbol, strategy, new Date(start), new Date(end), initialEquity, isDecoupled, undefined)
+  handleIPC('bot:runBacktest', async (event, symbol, strategy, start, end, initialEquity, isDecoupled) => {
+    return await runBacktest(symbol, strategy, new Date(start), new Date(end), initialEquity, isDecoupled, (progress, interimResults) => {
+      event.sender.send('bt:progress', progress)
+      if (interimResults) {
+        event.sender.send('bt:update', interimResults)
+      }
+    })
   })
   handleIPC('bot:manualTrade', async (_, symbol, side) => executeManualTrade(symbol, side))
   handleIPC('bot:getWhitelist', async () => await getWhitelist())

@@ -19,6 +19,7 @@ export interface IElectronAPI {
   getRecentTrades: (args: { mode: string, limit: number }) => Promise<any[]>
   clearTradeHistory: (mode: string) => Promise<boolean>
   runBacktest: (symbol: string, strategy: string, start: string, end: string, initialEquity: number, isDecoupled: boolean) => Promise<any>
+  onBacktestUpdate: (callback: (data: any) => void) => void
 }
 
 declare global {

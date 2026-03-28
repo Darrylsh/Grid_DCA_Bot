@@ -30,6 +30,9 @@ const api = {
   getStats: () => ipcRenderer.invoke('bot:getStats'),
   toggleBotManualMode: (symbol: string, enable: boolean) => ipcRenderer.invoke('bot:toggleBotManualMode', symbol, enable),
   runBacktest: (symbol: string, strategy: string, start: string, end: string, initialEquity: number, isDecoupled: boolean) => ipcRenderer.invoke('bot:runBacktest', symbol, strategy, start, end, initialEquity, isDecoupled),
+  onBacktestUpdate: (callback: (data: any) => void) => {
+    ipcRenderer.on('bt:update', (_event, data) => callback(data))
+  },
   getRecentTrades: (args: { mode: string, limit: number }) => ipcRenderer.invoke('bot:getRecentTrades', args),
   clearTradeHistory: (mode: string) => ipcRenderer.invoke('bot:clearTradeHistory', mode)
 }

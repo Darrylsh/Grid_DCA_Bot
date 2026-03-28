@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { 
-  Activity, Settings, BarChart2, DollarSign, Percent, Target, Zap, RotateCcw, Clock, Microscope, Play
+  Activity, Settings, BarChart2, DollarSign, Percent, Target, Zap, RotateCcw, Clock, Microscope, Play, Receipt
 } from 'lucide-react'
 
 const RobotIcon = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -204,6 +204,10 @@ export default function App() {
       window.api.getSettings().then(res => {
         if (res.trading_mode) setTradingMode(res.trading_mode)
         setSettings(prev => ({ ...prev, ...res }))
+      })
+      
+      window.api.onBacktestUpdate((data) => {
+        setBtResults(data)
       })
       
       const refreshStats = () => {
@@ -446,7 +450,7 @@ export default function App() {
                   <select 
                     value={btSymbol} 
                     onChange={(e) => setBtSymbol(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 font-bold appearance-none cursor-pointer"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-bold appearance-none cursor-pointer transition-all hover:bg-slate-800 hover:border-slate-600"
                   >
                     {whitelist.map((item: any) => (
                       <option key={item.symbol} value={item.symbol}>
@@ -463,7 +467,7 @@ export default function App() {
                   <select 
                     value={btStrategy} 
                     onChange={(e) => setBtStrategy(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 font-bold"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-bold appearance-none cursor-pointer transition-all hover:bg-slate-800 hover:border-slate-600"
                   >
                     <option value="SNIPER">SNIPER</option>
                     <option value="HUNTER">HUNTER</option>
@@ -473,11 +477,11 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Start Date</label>
-                  <input 
+                   <input 
                     type="date" 
                     value={btStart} 
                     onChange={(e) => setBtStart(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 font-mono transition-all hover:bg-slate-800 hover:border-slate-600"
                     style={{ colorScheme: 'dark' }}
                   />
                 </div>
@@ -487,7 +491,7 @@ export default function App() {
                     type="date" 
                     value={btEnd} 
                     onChange={(e) => setBtEnd(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 font-mono transition-all hover:bg-slate-800 hover:border-slate-600"
                     style={{ colorScheme: 'dark' }}
                   />
                 </div>
@@ -497,7 +501,7 @@ export default function App() {
                     type="number" 
                     value={btEquity} 
                     onChange={(e) => setBtEquity(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 font-bold"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-bold transition-all hover:bg-slate-800 hover:border-slate-600"
                   />
                 </div>
                 <div className="flex items-center gap-2 mt-5">
@@ -513,6 +517,7 @@ export default function App() {
                 <div className="flex items-end">
                   <button 
                     onClick={async () => {
+                      setBtResults(null); 
                       setBtLoading(true);
                       setBtError(null);
                       try {
@@ -547,7 +552,7 @@ export default function App() {
 
               {btResults && (
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <div className={`grid gap-4 mb-8 ${btResults.hasOpenPosition ? 'grid-cols-5' : 'grid-cols-4'}`}>
+                  <div className={`grid gap-4 mb-8 ${btResults.hasOpenPosition ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-6' : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-5'}`}>
                     <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-5">
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Final Result (USDT)</p>
                       <h3 className={`text-2xl font-bold font-mono ${(btResults.finalEquity >= (parseFloat(btEquity) || 0)) ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -581,7 +586,17 @@ export default function App() {
                     )}
                     <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-5">
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Total Trades</p>
-                      <h3 className="text-2xl font-bold font-mono text-indigo-400">{btResults.totalTrades}</h3>
+                      <h3 className="text-2xl font-bold font-mono text-slate-100">{btResults.totalTrades}</h3>
+                    </div>
+
+                    <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
+                      <div className="flex items-center gap-2 mb-1 text-rose-400">
+                        <Receipt size={14} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">Total Fees</span>
+                      </div>
+                      <h3 className="text-2xl font-bold font-mono text-rose-400">
+                        -${(Number(btResults.totalFees) || 0).toFixed(2)}
+                      </h3>
                     </div>
                   </div>
 
