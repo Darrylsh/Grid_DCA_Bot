@@ -9,8 +9,9 @@ const api = {
   stopBot: () => ipcRenderer.invoke('bot:stop'),
   getSettings: () => ipcRenderer.invoke('bot:getSettings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('bot:saveSettings', settings),
-  manualTrade: (symbol: string, side: string) => ipcRenderer.invoke('bot:manualTrade', symbol, side),
-  
+  manualTrade: (symbol: string, side: string) =>
+    ipcRenderer.invoke('bot:manualTrade', symbol, side),
+
   onMarketUpdate: (callback: (data: any) => void) => {
     ipcRenderer.on('bot:marketUpdate', (_event, data) => callback(data))
   },
@@ -26,14 +27,25 @@ const api = {
   getWhitelist: () => ipcRenderer.invoke('bot:getWhitelist'),
   saveWhitelist: (list: any[]) => ipcRenderer.invoke('bot:saveWhitelist', list),
   getDecoupledWhitelist: () => ipcRenderer.invoke('bot:getDecoupledWhitelist'),
-  saveDecoupledWhitelist: (list: string[]) => ipcRenderer.invoke('bot:saveDecoupledWhitelist', list),
+  saveDecoupledWhitelist: (list: string[]) =>
+    ipcRenderer.invoke('bot:saveDecoupledWhitelist', list),
   getStats: () => ipcRenderer.invoke('bot:getStats'),
-  toggleBotManualMode: (symbol: string, enable: boolean) => ipcRenderer.invoke('bot:toggleBotManualMode', symbol, enable),
-  runBacktest: (symbol: string, strategy: string, start: string, end: string, initialEquity: number, isDecoupled: boolean) => ipcRenderer.invoke('bot:runBacktest', symbol, strategy, start, end, initialEquity, isDecoupled),
+  toggleBotManualMode: (symbol: string, enable: boolean) =>
+    ipcRenderer.invoke('bot:toggleBotManualMode', symbol, enable),
+  runBacktest: (
+    symbol: string,
+    strategy: string,
+    start: string,
+    end: string,
+    initialEquity: number,
+    isDecoupled: boolean
+  ) =>
+    ipcRenderer.invoke('bot:runBacktest', symbol, strategy, start, end, initialEquity, isDecoupled),
   onBacktestUpdate: (callback: (data: any) => void) => {
     ipcRenderer.on('bt:update', (_event, data) => callback(data))
   },
-  getRecentTrades: (args: { mode: string, limit: number }) => ipcRenderer.invoke('bot:getRecentTrades', args),
+  getRecentTrades: (args: { mode: string; limit: number }) =>
+    ipcRenderer.invoke('bot:getRecentTrades', args),
   clearTradeHistory: (mode: string) => ipcRenderer.invoke('bot:clearTradeHistory', mode)
 }
 

@@ -14,11 +14,24 @@ export interface IElectronAPI {
   saveWhitelist: (list: any[]) => Promise<boolean>
   getDecoupledWhitelist: () => Promise<string[]>
   saveDecoupledWhitelist: (list: string[]) => Promise<boolean>
-  getStats: () => Promise<{ totalPnl: number; avgRoi: number; winRate: number; totalTrades: number; unrealizedPnl: number }>
+  getStats: () => Promise<{
+    totalPnl: number
+    avgRoi: number
+    winRate: number
+    totalTrades: number
+    unrealizedPnl: number
+  }>
   toggleBotManualMode: (symbol: string, enable: boolean) => Promise<boolean>
-  getRecentTrades: (args: { mode: string, limit: number }) => Promise<any[]>
+  getRecentTrades: (args: { mode: string; limit: number }) => Promise<any[]>
   clearTradeHistory: (mode: string) => Promise<boolean>
-  runBacktest: (symbol: string, strategy: string, start: string, end: string, initialEquity: number, isDecoupled: boolean) => Promise<any>
+  runBacktest: (
+    symbol: string,
+    strategy: string,
+    start: string,
+    end: string,
+    initialEquity: number,
+    isDecoupled: boolean
+  ) => Promise<any>
   onBacktestUpdate: (callback: (data: any) => void) => void
 }
 

@@ -13,7 +13,7 @@ const filterBinanceHeartbeats = (method: 'log' | 'info' | 'warn' | 'debug'): voi
     ) {
       return
     }
-    original.apply(console, args as any[])
+    original.apply(console, args as unknown[])
   }
 }
 ;(['log', 'info', 'warn', 'debug'] as const).forEach(filterBinanceHeartbeats)
@@ -58,18 +58,43 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
-import { botEvents, startBot, executeManualTrade, reloadWhitelist, updateSettingsLocally, reloadDecoupledList, getUnrealizedPnl, getCurrentMode, toggleBotManualMode } from './bot'
-import { getWhitelist, updateWhitelist, getSettings, updateSetting, getDecoupledWhitelist, updateDecoupledWhitelist, getMetrics, getRecentTrades } from './db'
+import {
+  botEvents,
+  startBot,
+  executeManualTrade,
+  reloadWhitelist,
+  updateSettingsLocally,
+  reloadDecoupledList,
+  getUnrealizedPnl,
+  getCurrentMode,
+  toggleBotManualMode
+} from './bot'
+import {
+  getWhitelist,
+  updateWhitelist,
+  getSettings,
+  updateSetting,
+  getDecoupledWhitelist,
+  updateDecoupledWhitelist,
+  getMetrics,
+  getRecentTrades,
+  clearTradeHistory
+} from './db'
 import { runBacktest } from './backtest'
 
+interface WhitelistItem {
+  symbol: string
+  strategy: string
+}
+
 function createWindow(settings: Record<string, string>): void {
-  let windowState = { width: 900, height: 670, x: undefined, y: undefined, isMaximized: false };
+  let windowState = { width: 900, height: 670, x: undefined, y: undefined, isMaximized: false }
   try {
     if (settings.window_state) {
-      windowState = JSON.parse(settings.window_state);
+      windowState = JSON.parse(settings.window_state)
     }
   } catch (e) {
-    console.error('Failed to parse window state:', e);
+    console.error('Failed to parse window state:', e)
   }
 
   // Create the browser window.
@@ -88,7 +113,7 @@ function createWindow(settings: Record<string, string>): void {
   })
 
   if (windowState.isMaximized) {
-    mainWindow.maximize();
+    mainWindow.maximize()
   }
 
   mainWindow.on('ready-to-show', () => {
@@ -96,32 +121,34 @@ function createWindow(settings: Record<string, string>): void {
   })
 
   // Debounced Window State Save
-  let saveTimeout: NodeJS.Timeout | undefined;
-  const saveWindowState = () => {
-    if (saveTimeout) clearTimeout(saveTimeout);
+  let saveTimeout: NodeJS.Timeout | undefined
+  const saveWindowState = (): void => {
+    if (saveTimeout) clearTimeout(saveTimeout)
     saveTimeout = setTimeout(async () => {
-      const bounds = mainWindow.getBounds();
-      const isMaximized = mainWindow.isMaximized();
+      const bounds = mainWindow.getBounds()
+      const isMaximized = mainWindow.isMaximized()
       const state = {
         width: bounds.width,
         height: bounds.height,
         x: bounds.x,
         y: bounds.y,
         isMaximized
-      };
-      await updateSetting('window_state', JSON.stringify(state));
-    }, 1000);
-  };
+      }
+      await updateSetting('window_state', JSON.stringify(state))
+    }, 1000)
+  }
 
-  mainWindow.on('resize', saveWindowState);
-  mainWindow.on('move', saveWindowState);
+  mainWindow.on('resize', saveWindowState)
+  mainWindow.on('move', saveWindowState)
 
   // Listen to bot events and forward to renderer
-  const forwardEvent = (channel: string) => (data: unknown) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(channel, data)
+  const forwardEvent =
+    (channel: string) =>
+    (data: unknown): void => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(channel, data)
+      }
     }
-  }
 
   botEvents.on('market_update', forwardEvent('bot:marketUpdate'))
   botEvents.on('trade_executed', forwardEvent('bot:tradeExecuted'))
@@ -169,37 +196,52 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC bot hooks - Defensive registration to prevent "second handler" errors during HMR
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleIPC = (channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any): void => {
+  const handleIPC = (
+    channel: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any
+  ): void => {
     ipcMain.removeHandler(channel)
     ipcMain.handle(channel, handler)
   }
 
   handleIPC('bot:start', async () => startBot())
-  handleIPC('bot:runBacktest', async (event, symbol, strategy, start, end, initialEquity, isDecoupled) => {
-    return await runBacktest(symbol, strategy, new Date(start), new Date(end), initialEquity, isDecoupled, (progress, interimResults) => {
-      event.sender.send('bt:progress', progress)
-      if (interimResults) {
-        event.sender.send('bt:update', interimResults)
-      }
-    })
-  })
-  handleIPC('bot:manualTrade', async (_, symbol, side) => executeManualTrade(symbol, side))
+  handleIPC(
+    'bot:runBacktest',
+    async (event, symbol, strategy, start, end, initialEquity, isDecoupled) => {
+      return await runBacktest(
+        symbol,
+        strategy,
+        new Date(start),
+        new Date(end),
+        initialEquity,
+        isDecoupled,
+        (progress, interimResults) => {
+          event.sender.send('bt:progress', progress)
+          if (interimResults) {
+            event.sender.send('bt:update', interimResults)
+          }
+        }
+      )
+    }
+  )
+  handleIPC('bot:manualTrade', async (_, symbol: string, side: 'BUY' | 'SELL') =>
+    executeManualTrade(symbol, side)
+  )
   handleIPC('bot:getWhitelist', async () => await getWhitelist())
-  handleIPC('bot:saveWhitelist', async (_, list) => {
+  handleIPC('bot:saveWhitelist', async (_, list: WhitelistItem[]) => {
     await updateWhitelist(list)
     await reloadWhitelist(list)
     return true
   })
   handleIPC('bot:getDecoupledWhitelist', async () => await getDecoupledWhitelist())
-  handleIPC('bot:saveDecoupledWhitelist', async (_, list) => {
+  handleIPC('bot:saveDecoupledWhitelist', async (_, list: string[]) => {
     await updateDecoupledWhitelist(list)
     await reloadDecoupledList()
     return true
   })
   handleIPC('bot:getSettings', async () => await getSettings())
-  handleIPC('bot:saveSettings', async (_, { key, value }) => {
+  handleIPC('bot:saveSettings', async (_, { key, value }: { key: string; value: string }) => {
     await updateSetting(key, value)
     await updateSettingsLocally({ [key]: value })
     return true
@@ -210,15 +252,14 @@ app.whenReady().then(async () => {
     const unrealizedPnl = getUnrealizedPnl()
     return { ...metrics, unrealizedPnl }
   })
-  handleIPC('bot:toggleBotManualMode', async (_, symbol, enable) => {
+  handleIPC('bot:toggleBotManualMode', async (_, symbol: string, enable: boolean) => {
     await toggleBotManualMode(symbol, enable)
     return true
   })
-  handleIPC('bot:getRecentTrades', async (_, { mode, limit }) => {
+  handleIPC('bot:getRecentTrades', async (_, { mode, limit }: { mode: string; limit: number }) => {
     return await getRecentTrades(mode, limit)
   })
-  handleIPC('bot:clearTradeHistory', async (_, mode) => {
-    const { clearTradeHistory } = require('./db')
+  handleIPC('bot:clearTradeHistory', async (_, mode: string) => {
     return await clearTradeHistory(mode)
   })
 
