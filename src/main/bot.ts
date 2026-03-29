@@ -3,7 +3,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 import { Spot } from '@binance/connector';
-import { initDb, getWhitelist, logTrade, savePosition, deletePosition, getActivePositions, updateHighWaterMark, getSettings, saveTickBatch, pruneOldTicks, getDecoupledWhitelist } from './db';
+import { initDb, getWhitelist, logTrade, savePosition, deletePosition, getActivePositions, updateHighWaterMark, getSettings, saveTickBatch, pruneOldTicks, getDecoupledWhitelist, updatePositionManualMode } from './db';
 import { RegimeFilter, checkTrailingStop, shouldEnter, STRATEGIES, getScaledConfig, calculateRSI } from './algos';
 import { EventEmitter } from 'events';
 
@@ -307,7 +307,8 @@ const executeTrade = async (symbol, side, price, reason = 'UNKNOWN') => {
             await savePosition(symbol, activePositions[symbol], currentMode);
         } else {
             // Standard first entry
-            const position = { entryPrice: price, quantity, highWaterMark: price, mode: currentMode };
+            const isManual = !!manualModes[symbol];
+            const position = { entryPrice: price, quantity, highWaterMark: price, mode: currentMode, isManual };
             activePositions[symbol] = position;
             await savePosition(symbol, position, currentMode); // Persist opening
         }
@@ -401,7 +402,7 @@ const processTick = async (symbol, currentPrice, currentVolume, generation, trad
 
     regimeFilter.addTick(symbol, currentPrice, currentVolume, baseConfig.HISTORY_LENGTH, null, baseConfig.VOLUME_CAP_MULT);
     bufferTick(symbol, currentPrice, currentVolume, tradeId, timestamp); // Record for backtest history
-    const { micro: regime, macro: macroRegime, isBouncing } = regimeFilter.getRegime(symbol, baseConfig);
+    const { micro: regime, macro: macroRegime, isBouncing, zScore, autocorrelation, obi, atr } = regimeFilter.getRegime(symbol, baseConfig);
     const btcData = regimeFilter.getRegime('BTCUSDT', baseConfig); // Core Market Guard regime
     const btcRegime = btcData.micro;
     const btcMacroDiff = btcData.macroDiff || 0;
@@ -443,7 +444,7 @@ const processTick = async (symbol, currentPrice, currentVolume, generation, trad
         }
 
         if (!isManual) {
-            const trailStop = checkTrailingStop(currentPrice, entryPrice, highWaterMark, macroRegime, strategyConfig, boxBounds);
+            const trailStop = checkTrailingStop(currentPrice, entryPrice, highWaterMark, macroRegime, strategyConfig, boxBounds, atr, regime);
 
             if (trailStop.shouldSell) {
                 console.log(`[${trailStop.reason}] Selling ${symbol}. High was ${highWaterMark}. Sell at ${currentPrice}. Macro: ${macroRegime}`);
@@ -451,7 +452,7 @@ const processTick = async (symbol, currentPrice, currentVolume, generation, trad
             }
         }
     }
-    broadcastSymbolUpdate(symbol, currentPrice, regime, macroRegime, isBouncing, rsi5m, isManual, strategyConfig, boxBounds);
+    broadcastSymbolUpdate(symbol, currentPrice, regime, macroRegime, isBouncing, rsi5m, isManual, strategyConfig, boxBounds, zScore, autocorrelation, obi);
 };
 
 const broadcastSymbolUpdate = (symbol, currentPrice, regime, macroRegime, isBouncing, rsi5m, isManual, strategyConfig, boxBounds) => {
@@ -515,14 +516,25 @@ const connectWebSocket = () => {
                     const timestamp = parsed.T; // Exchange timestamp
                     processTick(symbol, price, volume, currentGen, tradeId, timestamp).catch(e => console.error(e));
                 }
+                // BookTicker stream format: https://binance-docs.github.io/apidocs/spot/en/#individual-symbol-book-ticker-streams
+                else if (parsed.e === 'bookTicker') {
+                    const symbol = parsed.s;
+                    const bidQty = parseFloat(parsed.B);
+                    const askQty = parseFloat(parsed.A);
+                    regimeFilter.updateOrderBook(symbol, bidQty, askQty);
+                }
             } catch (e) { }
         }
     };
 
-    // Subscribing to aggregate trades for all symbols
-    const streams = monitoringList
-        .filter(sym => sym && typeof sym === 'string')
-        .map(sym => `${sym.toLowerCase()}@aggTrade`);
+    // Subscribing to aggregate trades AND book tickers for all symbols
+    const streams = [];
+    monitoringList.forEach(sym => {
+        if (sym && typeof sym === 'string') {
+            streams.push(`${sym.toLowerCase()}@aggTrade`);
+            streams.push(`${sym.toLowerCase()}@bookTicker`);
+        }
+    });
 
     // We import WebsocketStream
     const { WebsocketStream } = require('@binance/connector');
@@ -580,7 +592,7 @@ const evaluateEntries = async () => {
             const lastPrice = symbolHistory[symbolHistory.length - 1].price;
             const scaledConfig = getScaledConfig(symbol, symbolHistory, baseConfig);
             const rsi5m = calculateRSI(symbolHistory, 14, 300);
-            const { micro: regime, macro: macroRegime, isBouncing } = regimeFilter.getRegime(symbol, baseConfig);
+            const { micro: regime, macro: macroRegime, isBouncing, zScore, autocorrelation, obi } = regimeFilter.getRegime(symbol, baseConfig);
             const btcData = regimeFilter.getRegime('BTCUSDT', baseConfig);
             const btcRegime = btcData.micro;
             const btcMacroDiff = btcData.macroDiff || 0;
@@ -591,7 +603,8 @@ const evaluateEntries = async () => {
                 symbol, regime, false, btcRegime,
                 currentWhitelist, symbolHistory, lastPrice,
                 btcMacroDiff, scaledConfig, macroRegime,
-                isDecoupled, false, rsi5m, boxBounds
+                isDecoupled, false, rsi5m, boxBounds,
+                zScore, autocorrelation, obi
             );
 
             if (entryCheck === true) {
@@ -618,7 +631,11 @@ const evaluateEntries = async () => {
                 // Log block reason and reset counter — same as backtest consecutive reset on non-BULL window
                 if (entryCheck && entryCheck.allowed === false) {
                     const reason = entryCheck.reason;
-                    if (reason.startsWith('BTC_TOO_WEAK')) {
+                    const advice = entryCheck.advice;
+
+                    if (advice === 'MOON_POTENTIAL') {
+                        console.log(`[ADVISORY - MOON POTENTIAL] ${symbol} blocked by ${reason} but showing extreme momentum. Manual entry worthy?`);
+                    } else if (reason.startsWith('BTC_TOO_WEAK')) {
                         console.log(`[BLOCKED - BTC WEAK] ${symbol}: ${reason}`);
                     } else if (reason.startsWith('RSI_TOO_HIGH')) {
                         console.log(`[BLOCKED - RSI] ${symbol}: ${reason}`);
@@ -819,8 +836,18 @@ const loadPositionsForMode = async () => {
     activePositions = {}; // Clear memory
     const loadedPositions = await getActivePositions(currentMode);
     Object.assign(activePositions, loadedPositions);
+    
+    // Sync manual modes state from loaded positions
+    for (const symbol in loadedPositions) {
+        if (loadedPositions[symbol].isManual) {
+            manualModes[symbol] = true;
+        } else {
+            delete manualModes[symbol];
+        }
+    }
+
     if (Object.keys(activePositions).length > 0) {
-        console.log(`Loaded ${Object.keys(activePositions).length} active ${currentMode} positions.`);
+        console.log(`Loaded ${Object.keys(activePositions).length} active ${currentMode} positions. Manual modes: ${Object.keys(manualModes).length}`);
     }
 };
 
@@ -839,6 +866,14 @@ const syncWithDatabase = async () => {
                 activePositions[symbol].quantity = loadedPositions[symbol].quantity;
                 activePositions[symbol].entryPrice = loadedPositions[symbol].entryPrice;
                 activePositions[symbol].highWaterMark = Math.max(activePositions[symbol].highWaterMark, loadedPositions[symbol].highWaterMark);
+                activePositions[symbol].isManual = loadedPositions[symbol].isManual;
+            }
+
+            // Sync manual modes
+            if (loadedPositions[symbol].isManual) {
+                manualModes[symbol] = true;
+            } else {
+                delete manualModes[symbol];
             }
         }
 
@@ -901,13 +936,21 @@ const executeManualTrade = async (symbol, side) => {
     return true;
 };
 
-const toggleBotManualMode = (symbol, enable) => {
+const toggleBotManualMode = async (symbol, enable) => {
     if (enable) {
         manualModes[symbol] = true;
     } else {
         delete manualModes[symbol];
     }
+    
+    // Persist to DB if there's an active position
+    if (activePositions[symbol]) {
+        activePositions[symbol].isManual = !!enable;
+        await updatePositionManualMode(symbol, !!enable, currentMode);
+    }
+
     console.log(`[MANUAL MODE] ${symbol} set to ${enable}`);
+    refreshStreams();
 };
 
 const getUnrealizedPnl = () => {

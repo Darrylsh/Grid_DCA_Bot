@@ -26,7 +26,13 @@ const SNIPER = {
     COOLDOWN_MS: 15 * 60 * 1000, // 15 minutes
     MAX_RSI: 70,             // Block automated entries if RSI > 70
     SLIPPAGE_TOLERANCE: 0.001, // 0.1% limit price offset
-    VOLUME_CAP_MULT: 10      // Cap individual tick volume at 10x 5m average
+    Z_SCORE_LIMIT: 2.0,      // Block if > 2.0 (standard deviation)
+    MOMENTUM_MIN: 0.1,       // Lag-1 Autocorrelation must be > 0.1
+    OBI_MIN: 0.1,            // Order Book must be at least 10% skewed to buys
+    VOLUME_CAP_MULT: 10,      // Cap individual tick volume at 10x 5m average
+    ATR_STOP_MULTIPLIER: 2.5, // Stop at 2.5x ATR distance from HWM
+    TECHNICAL_EXIT: true,     // Exit if regime flips to BEAR or RECOVERY (if losing)
+    BREAKEVEN_PROTECTION: 0.01 // Move stop to entry once +1% reached
 };
 
 export default SNIPER;

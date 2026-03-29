@@ -32,7 +32,10 @@ const BOX = {
     
     // Strategy Specifics
     BOX_BUY_ZONE: 0.20,           // Bottom 20% of daily range
-    BOX_SELL_ZONE: 0.85            // Top 15% of daily range (optional exit trigger)
+    BOX_SELL_ZONE: 0.85,          // Top 15% of daily range (optional exit trigger)
+    ATR_STOP_MULTIPLIER: 3.5,
+    TECHNICAL_EXIT: true,
+    BREAKEVEN_PROTECTION: 0.008
 };
 
 export default BOX;

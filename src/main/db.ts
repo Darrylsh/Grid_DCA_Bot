@@ -65,6 +65,7 @@ const initDb = async () => {
         entry_price NUMERIC NOT NULL,
         quantity NUMERIC NOT NULL,
         high_water_mark NUMERIC NOT NULL,
+        is_manual BOOLEAN DEFAULT false,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         mode VARCHAR(20) DEFAULT 'LIVE',
         PRIMARY KEY (symbol, mode)
@@ -72,6 +73,7 @@ const initDb = async () => {
     `);
 
     await client.query(`ALTER TABLE active_positions ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'LIVE';`);
+    await client.query(`ALTER TABLE active_positions ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT false;`);
     try {
       await client.query(`ALTER TABLE active_positions DROP CONSTRAINT active_positions_pkey;`);
       await client.query(`ALTER TABLE active_positions ADD PRIMARY KEY (symbol, mode);`);
@@ -247,13 +249,13 @@ const getMetrics = async (mode = 'LIVE') => {
 };
 
 const savePosition = async (symbol, data, mode = 'LIVE') => {
-  const { entryPrice, quantity, highWaterMark } = data;
+  const { entryPrice, quantity, highWaterMark, isManual = false } = data;
   await pool.query(
-    `INSERT INTO active_positions (symbol, entry_price, quantity, high_water_mark, mode) 
-     VALUES ($1, $2, $3, $4, $5) 
+    `INSERT INTO active_positions (symbol, entry_price, quantity, high_water_mark, is_manual, mode) 
+     VALUES ($1, $2, $3, $4, $5, $6) 
      ON CONFLICT (symbol, mode) DO UPDATE SET 
-     entry_price = $2, quantity = $3, high_water_mark = $4, updated_at = CURRENT_TIMESTAMP`,
-    [symbol, entryPrice, quantity, highWaterMark, mode]
+     entry_price = $2, quantity = $3, high_water_mark = $4, is_manual = $5, updated_at = CURRENT_TIMESTAMP`,
+    [symbol, entryPrice, quantity, highWaterMark, isManual, mode]
   );
 };
 
@@ -269,10 +271,18 @@ const getActivePositions = async (mode = 'LIVE') => {
       entryPrice: parseFloat(row.entry_price),
       quantity: parseFloat(row.quantity),
       highWaterMark: parseFloat(row.high_water_mark),
+      isManual: row.is_manual,
       mode: row.mode
     };
   });
   return positions;
+};
+
+const updatePositionManualMode = async (symbol, isManual, mode = 'LIVE') => {
+  await pool.query(
+    'UPDATE active_positions SET is_manual = $1 WHERE symbol = $2 AND mode = $3',
+    [isManual, symbol, mode]
+  );
 };
 
 const updateHighWaterMark = async (symbol, price, mode = 'LIVE') => {
@@ -363,6 +373,7 @@ export {
   updateSetting,
   getDecoupledWhitelist,
   updateDecoupledWhitelist,
+  updatePositionManualMode,
   saveTickBatch,
   getTickHistory,
   pruneOldTicks

@@ -211,7 +211,7 @@ app.whenReady().then(async () => {
     return { ...metrics, unrealizedPnl }
   })
   handleIPC('bot:toggleBotManualMode', async (_, symbol, enable) => {
-    toggleBotManualMode(symbol, enable)
+    await toggleBotManualMode(symbol, enable)
     return true
   })
   handleIPC('bot:getRecentTrades', async (_, { mode, limit }) => {

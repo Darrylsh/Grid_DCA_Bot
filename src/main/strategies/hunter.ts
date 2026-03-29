@@ -26,7 +26,13 @@ const HUNTER = {
     COOLDOWN_MS: 30 * 60 * 1000, // 30 minutes for swing strategy
     MAX_RSI: 72,              // Raised from 65 to align with backtest behavior (swing strategy needs room)
     SLIPPAGE_TOLERANCE: 0.0015, // 0.15% limit price offset
-    VOLUME_CAP_MULT: 15       // Cap individual tick volume at 15x 5m average
+    Z_SCORE_LIMIT: 2.5,      // Block if > 2.5 (standard deviation)
+    MOMENTUM_MIN: 0.05,      // Lag-1 Autocorrelation must be > 0.05
+    OBI_MIN: 0.05,           // Order Book must be at least 5% skewed to buys
+    VOLUME_CAP_MULT: 15,       // Cap individual tick volume at 15x 5m average
+    ATR_STOP_MULTIPLIER: 2.0, // Stop at 2.0x ATR distance from HWM (tighter for swing)
+    TECHNICAL_EXIT: true,     // Exit if regime flips to BEAR
+    BREAKEVEN_PROTECTION: 0.015 // Move stop to entry once +1.5% reached
 };
 
 export default HUNTER;

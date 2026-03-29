@@ -88,7 +88,8 @@ export async function runBacktest(symbol, strategyName, startTime, endTime, init
 
             // --- EXIT LOGIC ---
             if (position) {
-                const exit = checkTrailingStop(tick.price, position.entryPrice, position.highWaterMark, 'BULL', strategyConfig);
+                const { micro: regime, macro: macroRegime, atr } = filter.getRegime(symbol, strategyConfig);
+                const exit = checkTrailingStop(tick.price, position.entryPrice, position.highWaterMark, macroRegime, strategyConfig, null, atr, regime);
                 if (exit && exit.shouldSell) {
                     const exitPrice = tick.price;
                     
@@ -133,7 +134,7 @@ export async function runBacktest(symbol, strategyName, startTime, endTime, init
                     const history = filter.getHistory(symbol);
                     if (history && history.length >= 60) {
                         const lastPrice = history[history.length - 1].price;
-                        const { micro: regime, macro: macroRegime } = filter.getRegime(symbol, strategyConfig);
+                        const { micro: regime, macro: macroRegime, atr } = filter.getRegime(symbol, strategyConfig);
                         const rsi5m = calculateRSI(history, 14, 300);
                         const scaledConfig = getScaledConfig(symbol, history, strategyConfig);
 

@@ -13,10 +13,18 @@ class RegimeFilter {
         
         // windowSum map: symbol -> { [windowSize]: sumOfPrices }
         this.windowSums = {};  // { symbol: { size: sumOfPrice } }
+        this.windowSqSums = {}; // { symbol: { size: sumOfPriceSquared } }
         this.windowVolSums = {}; // { symbol: { size: sumOfVolume } }
+
+        this.returns = {};      // symbol -> [float] (last 60 returns)
+        this.orderBooks = {};   // symbol -> { bidQty, askQty }
 
         // Start index pointers to avoid Array.shift() O(n) penalty
         this.offsets = {};
+    }
+
+    updateOrderBook(symbol, bidQty, askQty) {
+        this.orderBooks[symbol] = { bidQty, askQty };
     }
 
     addTick(symbol, price, dailyVolume, historyLength = 14400, directVolume = null, volumeCapMult = 0) {
@@ -24,7 +32,9 @@ class RegimeFilter {
             this.data[symbol] = [];
             this.sums[symbol] = { price: 0, volume: 0, vwapNum: 0 };
             this.windowSums[symbol] = {};
+            this.windowSqSums[symbol] = {};
             this.windowVolSums[symbol] = {};
+            this.returns[symbol] = [];
             this.offsets[symbol] = 0;
         }
 
@@ -35,6 +45,11 @@ class RegimeFilter {
             const lastData = this.data[symbol][this.data[symbol].length - 1];
             tickVolume = (lastData.dailyVolume > 0) ? (dailyVolume - lastData.dailyVolume) : 0;
             if (tickVolume < 0) tickVolume = 0;
+
+            // Track returns for autocorrelation (simple % change)
+            const ret = (price - lastData.price) / lastData.price;
+            this.returns[symbol].push(ret);
+            if (this.returns[symbol].length > 120) this.returns[symbol].shift(); // Keep enough for lag-1
         }
 
         // Fat-Finger Volume Guard: Cap outliers based on 5-minute historical average.
@@ -66,6 +81,7 @@ class RegimeFilter {
 
         // Update specific window sums (Hardcoded loop for performance)
         const w = this.windowSums[symbol];
+        const w2 = this.windowSqSums[symbol];
         const wv = this.windowVolSums[symbol];
         const sizes = [60, 300, 900, 3600, 14400, 86400];
         const effectiveLen = currentLen - this.offsets[symbol];
@@ -73,15 +89,19 @@ class RegimeFilter {
         for (let i = 0; i < sizes.length; i++) {
             const size = sizes[i];
             if (!w[size]) w[size] = 0;
+            if (!w2[size]) w2[size] = 0;
             if (!wv[size]) wv[size] = 0;
             
             w[size] += price;
+            w2[size] += (price * price);
             wv[size] += tickVolume;
             
             if (effectiveLen > size) {
                 const removedIdx = currentLen - size - 1;
                 if (removedIdx >= 0) {
-                    w[size] -= this.data[symbol][removedIdx].price;
+                    const oldPrice = this.data[symbol][removedIdx].price;
+                    w[size] -= oldPrice;
+                    w2[size] -= (oldPrice * oldPrice);
                     wv[size] -= this.data[symbol][removedIdx].volume;
                 }
             }
@@ -111,17 +131,18 @@ class RegimeFilter {
         return this.data[symbol].slice(offset);
     }
 
-    // Determine Regime: returns { micro, macro }
+    // Determine Regime: returns { micro, macro, zScore, autocorrelation, obi }
     getRegime(symbol, config = STRATEGIES.SNIPER) {
         const history = this.data[symbol];
         const offset = this.offsets[symbol] || 0;
         const effectiveLen = (history ? history.length : 0) - offset;
 
-        if (!history || effectiveLen < config.MICRO_SHORT) return { micro: 'UNKNOWN', macro: 'UNKNOWN' };
+        if (!history || effectiveLen < config.MICRO_SHORT) return { micro: 'UNKNOWN', macro: 'UNKNOWN', zScore: 0, autocorrelation: 0, obi: 0 };
 
         const currentPrice = history[history.length - 1].price;
         const sums = this.sums[symbol];
         const w = this.windowSums[symbol];
+        const w2 = this.windowSqSums[symbol];
 
         // 1. Calculate Micro Regime (O(1) using window sums)
         const microShortSize = config.MICRO_SHORT;
@@ -136,14 +157,47 @@ class RegimeFilter {
         const microLongMA = microLongSum / Math.min(effectiveLen, microLongSize);
         const microDiff = (microShortMA - microLongMA) / microLongMA;
 
+        // --- NEW: Z-Score (Calculated over Micro window) ---
+        const n = Math.min(effectiveLen, microShortSize);
+        const sumX = w[microShortSize] || 0;
+        const sumX2 = w2[microShortSize] || 0;
+        const mean = sumX / n;
+        const variance = (sumX2 / n) - (mean * mean);
+        const stdDev = Math.sqrt(Math.max(0, variance));
+        const zScore = stdDev > 0 ? (currentPrice - mean) / stdDev : 0;
+
+        // --- NEW: Autocorrelation (Lag-1) ---
+        let autocorrelation = 0;
+        const rets = this.returns[symbol] || [];
+        if (rets.length > 30) {
+            // Simple Pearson correlation for lag-1
+            const x = rets.slice(0, -1);
+            const y = rets.slice(1);
+            const n_corr = x.length;
+            const mu_x = x.reduce((a, b) => a + b, 0) / n_corr;
+            const mu_y = y.reduce((a, b) => a + b, 0) / n_corr;
+            let num = 0, denX = 0, denY = 0;
+            for (let i = 0; i < n_corr; i++) {
+                const dx = x[i] - mu_x;
+                const dy = y[i] - mu_y;
+                num += (dx * dy);
+                denX += (dx * dx);
+                denY += (dy * dy);
+            }
+            autocorrelation = (denX > 0 && denY > 0) ? num / Math.sqrt(denX * denY) : 0;
+        }
+
+        // --- NEW: Order Book Imbalance (OBI) ---
+        let obi = 0;
+        const ob = this.orderBooks[symbol];
+        if (ob && (ob.bidQty + ob.askQty) > 0) {
+            obi = (ob.bidQty - ob.askQty) / (ob.bidQty + ob.askQty);
+        }
+
         // Calculate MA Slope (velocity of the short MA)
         let microSlope = 0.0001; 
         if (effectiveLen > microShortSize + 10) {
             const pNow = microShortMA;
-            // Note: we don't track w[size] at historical offsets in O(1). 
-            // For backtest, we can approximate or use a small slice since it's only 10 ticks.
-            // To calculate pOld, we need the MA from 10 ticks ago.
-            // We can approximate this by taking a slice of the history.
             const olderSlice = history.slice(-(microShortSize + 10), -10);
             const olderSum = olderSlice.reduce((sum, t) => sum + t.price, 0);
             const pOld = olderSum / (olderSlice.length || 1);
@@ -172,7 +226,7 @@ class RegimeFilter {
         }
 
         // 2. Calculate Macro Regime (O(1))
-        if (effectiveLen < config.MACRO_SHORT) return { micro, macro: micro };
+        if (effectiveLen < config.MACRO_SHORT) return { micro, macro: micro, zScore, autocorrelation, obi };
 
         const macroShortSum = w[config.MACRO_SHORT] || microLongSum;
         const macroLongSum = w[config.MACRO_LONG] || 0;
@@ -195,14 +249,17 @@ class RegimeFilter {
             isBouncing = true;
         }
 
-        return { micro, macro, macroDiff, isBouncing };
+        const atr = calculateATR(history.slice(offset), config.ATR_CANDLE_PERIOD || 900) || 0;
+
+        return { micro, macro, macroDiff, isBouncing, zScore, autocorrelation, obi, atr };
     }
 }
 
-// Scalper's Pivot Trailing Take-Profit Logic (3-Phase Hybrid)
-const checkTrailingStop = (currentPrice, entryPrice, highWaterMark, macroRegime, config, boxBounds = null) => {
+// Scalper's Pivot Trailing Take-Profit Logic (3-Phase Hybrid + New Safeties)
+const checkTrailingStop = (currentPrice, entryPrice, highWaterMark, macroRegime, config, boxBounds = null, atr = 0, currentRegime = 'UNKNOWN') => {
     if (!config) return { shouldSell: false, reason: 'CONFIG_MISSING' };
-    const profit = (currentPrice - entryPrice) / entryPrice;
+    const currentRoi = (currentPrice - entryPrice) / entryPrice;
+    const highRoi = (highWaterMark - entryPrice) / entryPrice;
     const isBoxStrategy = boxBounds && boxBounds.high > 0;
 
     // BOX STRATEGY EXIT: Sell if we hit the top zone of the previous day's box
@@ -213,14 +270,37 @@ const checkTrailingStop = (currentPrice, entryPrice, highWaterMark, macroRegime,
             return { shouldSell: true, reason: `BOX_TOP_REACHED (${(pricePosition * 100).toFixed(1)}%)` };
         }
     }
+    
     if (!entryPrice) return { shouldSell: false };
-    const currentRoi = (currentPrice - entryPrice) / entryPrice;
-    const highRoi = (highWaterMark - entryPrice) / entryPrice;
+
+    // --- NEW: Technical Exit (Trend Flip) ---
+    // Exit if the fast regime turned BEAR or RECOVERY (if we are in a loss)
+    if (config.TECHNICAL_EXIT) {
+        if (currentRegime === 'BEAR' || (currentRegime === 'RECOVERY' && currentRoi < -0.01)) {
+            return { shouldSell: true, reason: `TECHNICAL_EXIT (${currentRegime})` };
+        }
+    }
+
+    // --- NEW: Break-Even Protection ---
+    // Once we hit the trigger (e.g. +1%), the stop moves to entry.
+    // If we dip below 0.1% profit after hitting trigger, exit.
+    if (config.BREAKEVEN_PROTECTION && highRoi >= config.BREAKEVEN_PROTECTION) {
+        if (currentRoi < 0.001) {
+            return { shouldSell: true, reason: 'BREAKEVEN_PROTECTION' };
+        }
+    }
+
+    // --- NEW: Volatility-Adjusted Stop (ATR) ---
+    // Exit if price drops more than X * ATR from the high water mark
+    if (config.ATR_STOP_MULTIPLIER && atr > 0) {
+        const atrDistance = atr * config.ATR_STOP_MULTIPLIER;
+        if (currentRoi < (highRoi - atrDistance)) {
+            return { shouldSell: true, reason: `ATR_STOP (${(atrDistance * 100).toFixed(2)}%)` };
+        }
+    }
 
     // Profit-Protected Trailing: If the strategy is a "Hold" strategy (deep hard stop),
     // ensure trailing stops only trigger if the trade is NET profitable after fees.
-    // We use 0.002 (0.2%) as the round-trip fee breakeven (0.1% buy + 0.1% sell).
-    // Raw currentRoi > 0 is NOT sufficient — a +0.05% exit is still a loss after fees.
     const isHoldStrategy = config.HARD_STOP <= -0.20;
     const FEE_BREAKEVEN = 0.002; // 0.1% buy + 0.1% sell round-trip
     const isBelowBreakeven = currentRoi < FEE_BREAKEVEN;
@@ -229,7 +309,6 @@ const checkTrailingStop = (currentPrice, entryPrice, highWaterMark, macroRegime,
     if (highRoi >= config.TRAIL_ACTIVATION) {
         if (isHoldStrategy && isBelowBreakeven) return { shouldSell: false };
 
-        // Literal trailing distance (removed macro-bull widening for predictability)
         const delta = config.TRAIL_DELTA;
         if (currentRoi <= (highRoi - delta)) {
             return { shouldSell: true, reason: 'TRAIL_STOP' };
@@ -238,9 +317,6 @@ const checkTrailingStop = (currentPrice, entryPrice, highWaterMark, macroRegime,
     }
 
     // === Phase 2: Protective Wide Trail ===
-    // Skip entirely if MID_TRAIL_ACTIVATION is falsy (0 or not set) — this allows
-    // strategies to cleanly opt out without the block trapping execution and
-    // preventing Phase 1 (HARD_STOP) from being reached.
     if (config.MID_TRAIL_ACTIVATION && highRoi >= config.MID_TRAIL_ACTIVATION) {
         if (isHoldStrategy && isBelowBreakeven) return { shouldSell: false };
 
@@ -304,7 +380,7 @@ const detectResistance = (history, currentPrice, config = STRATEGIES.SNIPER) => 
 };
 
 // Market Entry Condition Helper
-const shouldEnter = (symbol, regime, isBNB, btcRegime, whitelist = [], history = null, currentPrice = 0, btcMacroDiff = 0, config = STRATEGIES.SNIPER, macroRegime = 'UNKNOWN', isDecoupled = false, skipResistance = false, rsi = null, boxBounds = null) => {
+const shouldEnter = (symbol, regime, isBNB, btcRegime, whitelist = [], history = null, currentPrice = 0, btcMacroDiff = 0, config = STRATEGIES.SNIPER, macroRegime = 'UNKNOWN', isDecoupled = false, skipResistance = false, rsi = null, boxBounds = null, zScore = 0, autocorrelation = 0, obi = 0) => {
     if (isBNB) return false; // Never trade BNB
 
     // BOX STRATEGY GUARD: Only enter if price is in the defined "Buy Zone" (bottom X%) of the box
@@ -322,13 +398,21 @@ const shouldEnter = (symbol, regime, isBNB, btcRegime, whitelist = [], history =
     if (!whitelist.find(i => (typeof i === 'string' ? i : i.symbol) === symbol)) return false;
 
     // RSI Guard: Do not enter if the asset is overbought (RSI > MAX_RSI)
-    // Note: We still allow entries if RSI is low (e.g. < 45) during dip/recovery hooks.
     if (rsi !== null && config.MAX_RSI && rsi > config.MAX_RSI) {
         return { allowed: false, reason: `RSI_TOO_HIGH (rsi: ${rsi.toFixed(1)})` };
     }
 
+    // --- NEW: Autocorrelation (Momentum) Guard ---
+    if (config.MOMENTUM_MIN !== undefined && autocorrelation < config.MOMENTUM_MIN) {
+        return { allowed: false, reason: `LOW_MOMENTUM (autoCorr: ${autocorrelation.toFixed(2)})` };
+    }
+
+    // --- NEW: Order Book Imbalance (OBI) Guard ---
+    if (config.OBI_MIN !== undefined && obi < config.OBI_MIN) {
+        return { allowed: false, reason: `LOW_ORDER_BOOK_IMBALANCE (obi: ${obi.toFixed(2)})` };
+    }
+
     // BTC Market Guard: Block if BTC is BEAR, or if BTC trend strength is too weak
-    // SKIP if the coin is flagged as "DECOUPLED" (trades independent of BTC)
     if (symbol !== 'BTCUSDT' && !isDecoupled) {
         if (btcRegime === 'BEAR') return false;
         if (btcMacroDiff < config.BTC_STRENGTH_THRESHOLD) {
@@ -344,8 +428,16 @@ const shouldEnter = (symbol, regime, isBNB, btcRegime, whitelist = [], history =
     // ALLOW BULL entries or RECOVERY hook entries
     if (regime !== 'BULL' && regime !== 'RECOVERY') return false;
 
-    // Resistance Headroom Check: skip if there isn't enough room above current price
-    // Note: We often skip this in kline-based backtests to avoid "fake" resistance from synthetic ticks
+    // --- NEW: Z-Score (Over-extension) Guard with Moon Potential Advice ---
+    if (config.Z_SCORE_LIMIT !== undefined && zScore > config.Z_SCORE_LIMIT) {
+        return { 
+            allowed: false, 
+            reason: `OVEREXTENDED_Z_SCORE (${zScore.toFixed(2)})`, 
+            advice: 'MOON_POTENTIAL' 
+        };
+    }
+
+    // Resistance Headroom Check
     if (!skipResistance && history && currentPrice > 0) {
         const resistance = detectResistance(history, currentPrice, config);
         if (resistance !== null) {

@@ -697,6 +697,9 @@ export default function App() {
                         <th className="p-4 font-medium">Macro</th>
                         <th className="p-4 font-medium">Pos / Entry</th>
                         <th className="p-4 font-medium">Price</th>
+                        <th className="p-4 font-medium">Z-Score</th>
+                        <th className="p-4 font-medium">Mom</th>
+                        <th className="p-4 font-medium">OBI</th>
                         <th className="p-4 font-medium">High / Status</th>
                         <th className="p-4 font-medium">Unrealized ROI</th>
                         <th className="p-4 font-medium">RSI</th>
@@ -740,6 +743,21 @@ export default function App() {
                             ) : '-'}
                           </td>
                           <td className="p-4 font-mono">{row.currentPrice.toFixed(4)}</td>
+                          <td className="p-4 font-mono">
+                            <span className={`text-xs font-bold ${Math.abs(row.zScore) > 2 ? 'text-amber-400' : 'text-slate-400'}`}>
+                              {row.zScore?.toFixed(2) || '0.00'}
+                            </span>
+                          </td>
+                          <td className="p-4 font-mono">
+                            <span className={`text-xs font-bold ${row.autocorrelation > 0.2 ? 'text-emerald-400' : row.autocorrelation < -0.2 ? 'text-rose-400' : 'text-slate-400'}`}>
+                              {row.autocorrelation?.toFixed(2) || '0.00'}
+                            </span>
+                          </td>
+                          <td className="p-4 font-mono">
+                            <span className={`text-xs font-bold ${row.obi > 0.6 ? 'text-emerald-400' : row.obi < 0.4 ? 'text-rose-400' : 'text-slate-400'}`}>
+                              {row.obi?.toFixed(2) || '0.50'}
+                            </span>
+                          </td>
                           <td className="p-4">
                             {row.position ? (
                               <div className="flex flex-col">

@@ -28,7 +28,10 @@ const QUICK_EXIT = {
     COOLDOWN_MS: 3600000,         // 1 hour cooldown (irrelevant but long)
     MAX_RSI: 10,                   // Effectively blocks entries
     SLIPPAGE_TOLERANCE: 0.001,
-    VOLUME_CAP_MULT: 10
+    VOLUME_CAP_MULT: 10,
+    ATR_STOP_MULTIPLIER: 0,      // Disabled - we want ROI-based exit
+    TECHNICAL_EXIT: false,       // Disabled
+    BREAKEVEN_PROTECTION: 0      // Disabled
 };
 
 export default QUICK_EXIT;
