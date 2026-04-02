@@ -76,7 +76,20 @@ const initDb = async (): Promise<void> => {
 
     CREATE INDEX IF NOT EXISTS idx_grid_levels_symbol_mode
       ON grid_levels (symbol, mode, status);
+  `)
 
+  // --- MIGRATIONS: Add columns that were missed in earlier versions ---
+  try {
+    database.exec('ALTER TABLE grid_state ADD COLUMN base_quantity REAL DEFAULT 0')
+    console.log('[DB] grid_state: Added column base_quantity')
+  } catch { /* already exists */ }
+
+  try {
+    database.exec('ALTER TABLE grid_state ADD COLUMN base_entry_cost REAL DEFAULT 0')
+    console.log('[DB] grid_state: Added column base_entry_cost')
+  } catch { /* already exists */ }
+
+  database.exec(`
     CREATE TABLE IF NOT EXISTS candle_cache (
       symbol TEXT NOT NULL,
       open_time INTEGER NOT NULL,
@@ -204,7 +217,7 @@ const wipeAllData = (mode = 'LIVE'): boolean => {
   return true
 }
 
-const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate: number; totalTrades: number } => {
+const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate: number; fillRate: number; totalTrades: number } => {
   const row = getDb()
     .prepare(
       `SELECT
@@ -214,6 +227,10 @@ const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate:
           CAST(COUNT(CASE WHEN pnl > 0 AND side = 'SELL' THEN 1 END) AS REAL) /
           NULLIF(COUNT(CASE WHEN side = 'SELL' THEN 1 END), 0) * 100
         , 0) as win_rate,
+        COALESCE(
+          CAST(COUNT(CASE WHEN side = 'SELL' THEN 1 END) AS REAL) /
+          NULLIF(COUNT(CASE WHEN side = 'BUY' THEN 1 END), 0) * 100
+        , 0) as fill_rate,
         COUNT(CASE WHEN side = 'SELL' THEN 1 END) as total_trades
       FROM trades WHERE mode = ?`
     )
@@ -223,6 +240,7 @@ const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate:
     totalPnl: row.total_pnl || 0,
     avgRoi: row.avg_roi || 0,
     winRate: row.win_rate || 0,
+    fillRate: row.fill_rate || 0,
     totalTrades: row.total_trades || 0
   }
 }

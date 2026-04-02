@@ -53,6 +53,7 @@ export interface IElectronAPI {
     totalPnl: number
     avgRoi: number
     winRate: number
+    fillRate: number
     totalTrades: number
     unrealizedPnl: number
   }>

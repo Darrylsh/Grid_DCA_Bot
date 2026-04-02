@@ -11,9 +11,6 @@ import { EventEmitter } from 'events'
 import {
   initDb,
   getWhitelist,
-  getRecentTrades,
-  clearTradeHistory,
-  wipeAllData,
   getSettings,
   logTrade,
   saveGridState,
@@ -430,18 +427,31 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
     pctFromBase = ((currentPrice - state.basePrice) / state.basePrice) * 100
   }
 
-  // Unrealized PnL from base share
+  // Unrealized PnL from base share — based on true entry cost, not the floating base price
   let baseUnrealizedPnl = 0
   let baseUnrealizedRoi = 0
   if (state) {
-    baseUnrealizedPnl = (currentPrice - state.basePrice) * state.baseQuantity
-    baseUnrealizedRoi = (currentPrice - state.basePrice) / state.basePrice
+    // FALLBACK: If cost/quantity was missing from DB migration, estimate it from share amount
+    const entryCost = state.baseEntryCost > 0 ? state.baseEntryCost : getShareAmount()
+    const entryQty = state.baseQuantity > 0 ? state.baseQuantity : entryCost / state.basePrice
+    
+    const avgEntryPrice = entryCost / entryQty
+    baseUnrealizedPnl = (currentPrice - avgEntryPrice) * entryQty
+    baseUnrealizedRoi = (currentPrice - avgEntryPrice) / avgEntryPrice
   }
 
   // Unrealized PnL from grid levels
   const gridUnrealizedPnl = levels.reduce((sum, l) => {
     return sum + (currentPrice - l.buyPrice) * l.quantity
   }, 0)
+
+  // Active Share PnL: the PnL of the MOST RECENTLY bought share (the lowest buy price level)
+  // If no grid levels exist, the base share is the active one.
+  let activeSharePnl = baseUnrealizedPnl
+  if (levels.length > 0) {
+    const lowestLevel = [...levels].sort((a, b) => a.buyPrice - b.buyPrice)[0]
+    activeSharePnl = (currentPrice - lowestLevel.buyPrice) * lowestLevel.quantity
+  }
 
   botEvents.emit('market_update', {
     symbol,
@@ -462,6 +472,7 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
     baseUnrealizedPnl,
     baseUnrealizedRoi,
     gridUnrealizedPnl,
+    activeSharePnl,
     totalUnrealizedPnl: baseUnrealizedPnl + gridUnrealizedPnl,
     botStartTime,
     hasBaseShare: !!state
@@ -476,16 +487,23 @@ const registerBaseShare = async (
   price: number,
   quantity: number
 ): Promise<void> => {
+  // price=0 / qty=0 means "use the capital allocation setting at current price"
+  const useCapitalAlloc = price === 0 && quantity === 0
+  const shareAmount = getShareAmount()
+
   let fillPrice = price
   let fillQuantity = quantity
 
   if (currentMode === 'LIVE') {
     console.log(`[BASE SHARE] ${symbol}: Executing real MARKET BUY order...`)
     try {
-      const result = await client.newOrder(symbol, 'BUY', 'MARKET', {
-        quantity: quantity.toString()
-      }) as any
-      
+      // If called via one-click, use quoteOrderQty to spend exactly $shareAmount
+      const orderParams = useCapitalAlloc
+        ? { quoteOrderQty: shareAmount.toString() }
+        : { quantity: quantity.toString() }
+
+      const result = await client.newOrder(symbol, 'BUY', 'MARKET', orderParams) as any
+
       const fills = result.data.fills || []
       if (fills.length > 0) {
         const totalQty = fills.reduce((sum: number, f: any) => sum + parseFloat(f.qty), 0)
@@ -498,6 +516,12 @@ const registerBaseShare = async (
     } catch (e: any) {
       console.error(`[BASE SHARE FAILED] ${symbol}:`, e.response?.data || e.message)
       throw e // Re-throw to inform the UI of the failure
+    }
+  } else {
+    // SIMULATION mode: auto-calculate from current price if 0/0
+    if (useCapitalAlloc) {
+      fillPrice = lastPrices[symbol] || 0
+      fillQuantity = fillPrice > 0 ? shareAmount / fillPrice : 0
     }
   }
 
@@ -851,10 +875,31 @@ const startOrderPolling = (): void => {
 // ---------------------------------------------------------------------------
 // WebSocket — Market Price Feed
 // ---------------------------------------------------------------------------
+let lastMessageTime = 0
+let watchdogInterval: NodeJS.Timeout | null = null
+
+const startWatchdog = (): void => {
+  if (watchdogInterval) clearInterval(watchdogInterval)
+  watchdogInterval = setInterval(() => {
+    // Determine if we have anything to monitor
+    const currentWhitelist = getWhitelist()
+    const activeGridSymbols = Object.keys(gridState)
+    if (currentWhitelist.length === 0 && activeGridSymbols.length === 0) return
+
+    // If no message for 45 seconds, restart the stream
+    const staleTime = Date.now() - lastMessageTime
+    if (lastMessageTime > 0 && staleTime > 45_000) {
+      console.warn(`[WATCHDOG] WebSocket stale (no message for ${Math.round(staleTime / 1000)}s). Restarting...`)
+      connectWebSocket()
+    }
+  }, 15_000)
+}
+
 const connectWebSocket = (): void => {
   streamGeneration += 1
   const currentGen = streamGeneration
 
+  const currentWhitelist = getWhitelist()
   // Monitor all whitelisted symbols + any with active grid states
   const monitoringSet = new Set([
     ...currentWhitelist,
@@ -867,26 +912,41 @@ const connectWebSocket = (): void => {
   if (monitoringList.length === 0) return
 
   const callbacks = {
-    open: () => console.log(`[GEN ${currentGen}] WebSocket connected.`),
+    open: () => {
+      console.log(`[GEN ${currentGen}] WebSocket connected.`)
+      lastMessageTime = Date.now() // Initialize heartbeat
+      startWatchdog()
+    },
     close: () => console.log(`[GEN ${currentGen}] WebSocket closed.`),
     error: (err: any) => console.error(`[GEN ${currentGen}] WebSocket error:`, err),
     message: (data: string) => {
       if (streamGeneration !== currentGen) return
+      lastMessageTime = Date.now() // Update heartbeat
       try {
         const combined = JSON.parse(data)
         const parsed = combined.data ?? combined
-        if (parsed.e === 'aggTrade' || parsed.e === 'trade') {
+        if (parsed.e === 'aggTrade' || parsed.e === 'trade' || parsed.e === '24hrTicker') {
           const symbol = parsed.s
-          const price = parseFloat(parsed.p)
+          // 'p' is for trade/aggTrade, 'c' is for 24hrTicker
+          const priceStr = parsed.c || parsed.p
+          const price = parseFloat(priceStr)
           if (!isNaN(price)) processTick(symbol, price)
         }
       } catch { /* ignore */ }
     }
   }
 
+  if (wsClient) {
+    try {
+      wsClient.terminate()
+    } catch { /* ignore */ }
+  }
+
   wsClient = new WebsocketStream({ callbacks })
-  const streams = monitoringList.map((sym) => `${sym.toLowerCase()}@aggTrade`)
-  streams.forEach((stream) => wsClient.subscribe(stream))
+  const streams = monitoringList.map((sym) => `${sym.toLowerCase()}@ticker`)
+  streams.forEach((stream) => {
+    wsClient.subscribe(stream)
+  })
 }
 
 // ---------------------------------------------------------------------------

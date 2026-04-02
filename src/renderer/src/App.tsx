@@ -14,8 +14,12 @@ import {
   TrendingDown,
   Trash2,
   TrendingUp,
-  Layers
+  Layers,
+  CheckCircle,
+  Shuffle
 } from 'lucide-react'
+import buySound from './assets/buy.mp3'
+import sellSound from './assets/sell.mp3'
 
 const RobotIcon = ({ size = 24, className = '' }: { size?: number; className?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
@@ -115,12 +119,10 @@ export default function App() {
     capital_value: '100',
     grid_step_percent: '3'
   })
-  const [stats, setStats] = useState({ totalPnl: 0, avgRoi: 0, winRate: 0, unrealizedPnl: 0, totalTrades: 0 })
+  const [stats, setStats] = useState({ totalPnl: 0, avgRoi: 0, winRate: 0, fillRate: 0, unrealizedPnl: 0, totalTrades: 0 })
   const [tickFlashing, setTickFlashing] = useState(false)
 
-  // Register base share modal
-  const [registerModal, setRegisterModal] = useState<{ symbol: string; price: number } | null>(null)
-  const [registerQty, setRegisterQty] = useState('')
+  const [registeringSymbol, setRegisteringSymbol] = useState<string | null>(null)
 
   // Backtest state
   const [btSymbol, setBtSymbol] = useState('')
@@ -157,6 +159,10 @@ export default function App() {
       })
       window.api.onBalanceUpdate((data) => setBalances(data))
       window.api.onTradeExecuted((data) => {
+        // Play sounds
+        if (data.side === 'BUY') new Audio(buySound).play().catch(() => {})
+        if (data.side === 'SELL') new Audio(sellSound).play().catch(() => {})
+
         // Refresh from DB (single source of truth) to avoid duplicate entries
         window.api.getRecentTrades({ mode: tradingMode, limit: 50 }).then(setLogs)
         setToast({ message: `[${data.side}] ${stripUSDT(data.symbol)} @ $${Number(data.price).toFixed(4)} — ${data.reason || ''}`, type: 'success' })
@@ -270,21 +276,18 @@ export default function App() {
     }
   }
 
-  // Open the "Register Base Share" modal for a symbol
-  const openRegisterModal = (symbol: string) => {
-    const row = marketData[symbol]
-    const price = row?.currentPrice || 0
-    setRegisterModal({ symbol, price })
-    setRegisterQty(price > 0 ? (parseFloat(settings.capital_value || '100') / price).toFixed(6) : '')
-  }
-
-  const confirmRegisterBase = async () => {
-    if (!registerModal) return
-    const qty = parseFloat(registerQty)
-    if (isNaN(qty) || qty <= 0) { setToast({ message: 'Invalid quantity', type: 'error' }); return }
-    await window.api.registerBaseShare(registerModal.symbol, registerModal.price, qty)
-    setToast({ message: `Base share registered: ${stripUSDT(registerModal.symbol)} ${qty.toFixed(6)} @ $${registerModal.price.toFixed(4)}`, type: 'success' })
-    setRegisterModal(null)
+  // Direct one-click market buy at configured capital allocation
+  const handleSetBase = async (symbol: string) => {
+    setRegisteringSymbol(symbol)
+    try {
+      // price=0 and qty=0 signals the bot to use capital_value setting for a market buy
+      await window.api.registerBaseShare(symbol, 0, 0)
+      setToast({ message: `Market buy submitted for ${stripUSDT(symbol)} — check activity log`, type: 'success' })
+    } catch (e: any) {
+      setToast({ message: `Failed to buy: ${e?.message || 'Unknown error'}`, type: 'error' })
+    } finally {
+      setRegisteringSymbol(null)
+    }
   }
 
   return (
@@ -394,11 +397,12 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <>
               {/* Stats Grid */}
-              <div className="grid grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-5 gap-3 mb-8">
                 {[
                   { label: 'Realized PNL', value: `$${stats.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: DollarSign, color: stats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400', bg: 'bg-emerald-500/10' },
                   { label: 'Avg Grid ROI', value: `${(stats.avgRoi * 100).toFixed(2)}%`, icon: Percent, color: stats.avgRoi >= 0 ? 'text-blue-400' : 'text-rose-400', bg: 'bg-blue-500/10' },
-                  { label: 'Fill Rate', value: `${stats.winRate.toFixed(1)}%`, icon: Target, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                  { label: 'Win Rate', value: `${stats.winRate.toFixed(1)}%`, icon: CheckCircle, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                  { label: 'Fill Rate', value: `${stats.fillRate.toFixed(1)}%`, icon: Shuffle, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
                   { label: 'Unrealized PNL', value: `$${stats.unrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Zap, color: stats.unrealizedPnl >= 0 ? 'text-amber-400' : 'text-rose-400', bg: 'bg-amber-500/10' }
                 ].map((stat, i) => (
                   <div key={i} className="bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 flex items-center gap-4 hover:bg-slate-800/60 transition-colors">
@@ -431,14 +435,15 @@ export default function App() {
                         <th className="p-4 font-medium">Base Price</th>
                         <th className="p-4 font-medium">% From Base</th>
                         <th className="p-4 font-medium">Grid Levels</th>
-                        <th className="p-4 font-medium">Unrealized PnL</th>
+                        <th className="p-4 font-medium text-amber-400">Current PnL</th>
+                        <th className="p-4 font-medium text-emerald-400">Total PnL</th>
                         <th className="p-4 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-700/50">
                       {Object.values(marketData).length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-slate-500">
+                          <td colSpan={8} className="p-8 text-center text-slate-500">
                             <div className="flex flex-col items-center gap-3">
                               <RotateCcw size={32} className="animate-spin text-slate-600" />
                               Waiting for market data streams...
@@ -484,6 +489,13 @@ export default function App() {
                                   ) : <span className="text-slate-600 text-xs">—</span>}
                                 </td>
                                 <td className="p-4">
+                                  {row.activeSharePnl != null ? (
+                                    <span className={`font-mono font-bold ${row.activeSharePnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      {row.activeSharePnl >= 0 ? '+' : ''}${row.activeSharePnl?.toFixed(2)}
+                                    </span>
+                                  ) : <span className="text-slate-600">-</span>}
+                                </td>
+                                <td className="p-4 border-l border-slate-700/30">
                                   {row.totalUnrealizedPnl != null ? (
                                     <span className={`font-mono font-bold ${row.totalUnrealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                       {row.totalUnrealizedPnl >= 0 ? '+' : ''}${row.totalUnrealizedPnl?.toFixed(2)}
@@ -493,9 +505,11 @@ export default function App() {
                                 <td className="p-4 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
                                     {!row.hasBaseShare ? (
-                                      <button onClick={() => openRegisterModal(row.symbol)}
-                                        className="px-3 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 rounded-lg text-[10px] font-bold transition-colors border border-amber-500/30">
-                                        SET BASE
+                                      <button
+                                        onClick={() => handleSetBase(row.symbol)}
+                                        disabled={registeringSymbol === row.symbol}
+                                        className="px-3 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 disabled:opacity-50 rounded-lg text-[10px] font-bold transition-colors border border-amber-500/30">
+                                        {registeringSymbol === row.symbol ? 'BUYING...' : 'SET BASE'}
                                       </button>
                                     ) : (
                                       <div className="flex gap-2">
@@ -832,31 +846,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Register Base Share Modal */}
-      {registerModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 w-full max-w-md shadow-2xl">
-            <h3 className="text-lg font-bold mb-2">Register Base Share</h3>
-            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-              Register <span className="text-amber-400 font-bold">{stripUSDT(registerModal.symbol)}</span> as the base reference at <span className="font-mono font-bold">${registerModal.price.toFixed(4)}</span>. 
-              <br/>
-              <span className="text-rose-400 font-bold">This will execute a real MARKET BUY on Binance to cover the position.</span>
-            </p>
-            <div className="flex flex-col gap-4">
-              <div>
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">Quantity You Hold</label>
-                <input type="number" value={registerQty} onChange={(e) => setRegisterQty(e.target.value)} step="any"
-                  className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-amber-500 transition-colors" />
-                <p className="text-[10px] text-slate-500 mt-1">Est. cost: ${(parseFloat(registerQty || '0') * registerModal.price).toFixed(2)}</p>
-              </div>
-              <div className="flex gap-3 mt-2">
-                <button onClick={() => setRegisterModal(null)} className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-bold transition-colors">Cancel</button>
-                <button onClick={confirmRegisterBase} className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors">Confirm Base Share</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
