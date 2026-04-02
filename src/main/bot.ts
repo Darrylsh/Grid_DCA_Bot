@@ -473,17 +473,42 @@ const registerBaseShare = async (
   price: number,
   quantity: number
 ): Promise<void> => {
-  const cost = price * quantity
-  gridState[symbol] = { basePrice: price, baseQuantity: quantity, baseEntryCost: cost }
+  let fillPrice = price
+  let fillQuantity = quantity
+
+  if (currentMode === 'LIVE') {
+    console.log(`[BASE SHARE] ${symbol}: Executing real MARKET BUY order...`)
+    try {
+      const result = await client.newOrder(symbol, 'BUY', 'MARKET', {
+        quantity: quantity.toString()
+      }) as any
+      
+      const fills = result.data.fills || []
+      if (fills.length > 0) {
+        const totalQty = fills.reduce((sum: number, f: any) => sum + parseFloat(f.qty), 0)
+        const totalCost = fills.reduce((sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty), 0)
+        fillPrice = totalCost / totalQty
+        fillQuantity = totalQty
+        console.log(`[BASE SHARE] ${symbol}: Market buy filled @ avg $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}`)
+      }
+      fetchBalances()
+    } catch (e: any) {
+      console.error(`[BASE SHARE FAILED] ${symbol}:`, e.response?.data || e.message)
+      throw e // Re-throw to inform the UI of the failure
+    }
+  }
+
+  const cost = fillPrice * fillQuantity
+  gridState[symbol] = { basePrice: fillPrice, baseQuantity: fillQuantity, baseEntryCost: cost }
   saveGridState(symbol, gridState[symbol], currentMode)
 
-  console.log(`[BASE SHARE] ${symbol}: Registered base share @ $${price.toFixed(4)}, qty: ${quantity.toFixed(6)}, cost: $${cost.toFixed(2)}`)
+  console.log(`[BASE SHARE] ${symbol}: Registered base share @ $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}, cost: $${cost.toFixed(2)}`)
 
   logTrade({
     symbol,
     side: 'BUY',
-    price,
-    quantity,
+    price: fillPrice,
+    quantity: fillQuantity,
     pnl: 0,
     roi: 0,
     reason: 'BASE_SHARE'
@@ -492,15 +517,15 @@ const registerBaseShare = async (
   botEvents.emit('trade_executed', {
     symbol,
     side: 'BUY',
-    price,
-    quantity,
+    price: fillPrice,
+    quantity: fillQuantity,
     pnl: 0,
     roi: 0,
     reason: 'BASE_SHARE',
     timestamp: new Date()
   })
 
-  broadcastMarketUpdate(symbol, lastPrices[symbol] || price)
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || fillPrice)
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +589,15 @@ const sellBaseShare = async (symbol: string): Promise<void> => {
   deleteGridState(symbol, currentMode)
   console.log(`[BASE SHARE SOLD] ${symbol}: Sold @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)}`)
   broadcastMarketUpdate(symbol, fillPrice)
+}
+
+// ---------------------------------------------------------------------------
+// Delete Base Share record (locally only, no trade)
+// ---------------------------------------------------------------------------
+export const deleteBaseShareLocally = (symbol: string): void => {
+  delete gridState[symbol]
+  console.log(`[BASE SHARE] ${symbol}: Local record deleted.`)
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
 }
 
 // ---------------------------------------------------------------------------

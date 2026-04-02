@@ -12,6 +12,7 @@ import {
   Microscope,
   Play,
   TrendingDown,
+  Trash2,
   TrendingUp,
   Layers
 } from 'lucide-react'
@@ -245,6 +246,15 @@ export default function App() {
     }
   }
 
+  const handleDeleteBaseShare = async (symbol: string) => {
+    if (window.confirm(`Delete local record for ${stripUSDT(symbol)}? This will NOT sell your coins on Binance, it only clears the bot's tracking state.`)) {
+      await window.api.deleteBaseShare(symbol)
+      setToast({ message: `Record deleted for ${stripUSDT(symbol)}`, type: 'success' })
+      // Refresh state
+      window.api.getGridState().then(setMarketData)
+    }
+  }
+
   // Open the "Register Base Share" modal for a symbol
   const openRegisterModal = (symbol: string) => {
     const row = marketData[symbol]
@@ -473,14 +483,37 @@ export default function App() {
                                         SET BASE
                                       </button>
                                     ) : (
-                                      <button onClick={async () => {
-                                        if (window.confirm(`Sell base share for ${stripUSDT(row.symbol)}?`)) {
-                                          await window.api.sellBaseShare(row.symbol)
-                                          setToast({ message: `Base share sold for ${stripUSDT(row.symbol)}`, type: 'success' })
-                                        }
-                                      }} className="px-3 py-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg text-[10px] font-bold transition-colors border border-rose-500/20">
-                                        SELL BASE
-                                      </button>
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => {
+                                            if (
+                                              window.confirm(
+                                                `Sell base share for ${stripUSDT(row.symbol)}?`
+                                              )
+                                            ) {
+                                              window.api.sellBaseShare(row.symbol).then(() => {
+                                                setToast({
+                                                  message: `Base share sold for ${stripUSDT(
+                                                    row.symbol
+                                                  )}`,
+                                                  type: 'success'
+                                                })
+                                                window.api.getGridState().then(setMarketData)
+                                              })
+                                            }
+                                          }}
+                                          className="px-3 py-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg text-[10px] font-bold transition-colors border border-rose-500/20"
+                                        >
+                                          Sell Base
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteBaseShare(row.symbol)}
+                                          className="p-1.5 bg-slate-700 text-slate-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-all border border-slate-600"
+                                          title="Delete local record only"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </div>
                                     )}
                                     {levels.length > 0 && (
                                       <button onClick={async () => {
@@ -771,9 +804,10 @@ export default function App() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold mb-2">Register Base Share</h3>
-            <p className="text-slate-400 text-sm mb-6">
-              Set <span className="text-amber-400 font-bold">{stripUSDT(registerModal.symbol)}</span> as the base reference at <span className="font-mono font-bold">${registerModal.price.toFixed(4)}</span>.
-              This is your manually-bought first share that will never be auto-sold.
+            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+              Register <span className="text-amber-400 font-bold">{stripUSDT(registerModal.symbol)}</span> as the base reference at <span className="font-mono font-bold">${registerModal.price.toFixed(4)}</span>. 
+              <br/>
+              <span className="text-rose-400 font-bold">This will execute a real MARKET BUY on Binance to cover the position.</span>
             </p>
             <div className="flex flex-col gap-4">
               <div>

@@ -173,6 +173,13 @@ app.whenReady().then(async () => {
     return true
   })
   handleIPC('bot:getGridState', async () => getFullGridState())
+  handleIPC('bot:deleteBaseShare', async (_, symbol: string) => {
+    const { deleteGridState } = await import('./db')
+    const { deleteBaseShareLocally } = await import('./bot')
+    deleteGridState(symbol, getCurrentMode())
+    deleteBaseShareLocally(symbol)
+    return true
+  })
 
   // ---- Manual trade (sets base share on BUY, sells base on SELL) ----
   handleIPC('bot:manualTrade', async (_, symbol: string, side: 'BUY' | 'SELL') =>
