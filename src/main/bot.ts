@@ -1,182 +1,140 @@
-/* eslint-disable no-empty, @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-// bot.ts
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// bot.ts — Grid DCA Bot Engine
 import * as path from 'path'
-
-interface ActivePosition {
-  entryPrice: number
-  quantity: number
-  highWaterMark: number
-  mode: string
-  isManual: boolean
-}
-interface WhitelistItem {
-  symbol: string
-  strategy?: string
-  active?: boolean
-}
-interface Tick {
-  price: number
-  volume: number
-  recorded_at: Date
-  trade_id: number | null
-}
-interface BoxBounds {
-  low: number
-  high: number
-  updatedAt: number
-}
-interface Filter {
-  stepSize?: number
-  tickSize?: number
-}
-import { WebsocketStream } from '@binance/connector'
 import * as dotenv from 'dotenv'
 dotenv.config({ path: path.join(__dirname, '../../.env') })
-import { Spot } from '@binance/connector'
+
+import { WebsocketStream, Spot } from '@binance/connector'
+import * as https from 'https'
+import WebSocket from 'ws'
+import { EventEmitter } from 'events'
 import {
   initDb,
   getWhitelist,
-  logTrade,
-  savePosition,
-  deletePosition,
-  getActivePositions,
-  updateHighWaterMark,
   getSettings,
-  saveTickBatch,
-  pruneOldTicks,
-  getDecoupledWhitelist,
-  updatePositionManualMode
+  logTrade,
+  saveGridState,
+  deleteGridState,
+  getGridState,
+  getAllActiveGridLevels,
+  saveGridLevel,
+  markGridLevelFilled,
+  deleteAllGridLevels
 } from './db'
-import {
-  RegimeFilter,
-  checkTrailingStop,
-  shouldEnter,
-  STRATEGIES,
-  getScaledConfig,
-  calculateRSI,
-  StrategyConfig
-} from './algos'
-import { EventEmitter } from 'events'
 
-// Initialize Binance API keys from .env
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+interface GridState {
+  basePrice: number       // Reference price for 3% up/down calculation
+  baseQuantity: number    // Coin quantity of the base share
+  baseEntryCost: number   // USDT cost of the base share
+}
+
+interface GridLevel {
+  id: number
+  symbol: string
+  mode: string
+  buyPrice: number
+  sellPrice: number
+  quantity: number
+  cost: number
+  status: 'PENDING_SELL' | 'FILLED'
+  binanceSellOrderId?: string
+}
+
+interface Filter {
+  stepSize: number
+  tickSize: number
+}
+
+// ---------------------------------------------------------------------------
+// Binance Client
+// ---------------------------------------------------------------------------
 const apiKey = process.env['BINANCE_API_KEY']
 const apiSecret = process.env['BINANCE_API_SECRET']
-
-// If API key is provided, use it. Otherwise, initialize without keys just for market data
 const client = apiKey ? new Spot(apiKey, apiSecret) : new Spot()
 
-const regimeFilter = new RegimeFilter()
+// ---------------------------------------------------------------------------
+// In-Memory State
+// ---------------------------------------------------------------------------
+// gridState: basePrice tracking per symbol — only set once user registers a base share
+const gridState: Record<string, GridState> = {}
 
-// Helper to refresh streams if needed (e.g. after buy/sell)
-const refreshStreams = () => {
-  const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-  const monitoringSet = new Set([...whitelistSymbols, ...Object.keys(activePositions), 'BTCUSDT'])
-  botEvents.emit('monitoring_update', Array.from(monitoringSet))
-  if (wsClient) reloadWhitelist(currentWhitelist).catch((e) => console.error('Refresh fail:', e))
-}
+// gridLevels: in-memory cache of pending grid sells (synced from DB on start)
+const gridLevels: Record<string, GridLevel[]> = {}
 
-// In-memory state
-let activePositions: Record<string, ActivePosition> = {} // { symbol: { entryPrice, quantity, highWaterMark } }
-let currentWhitelist: WhitelistItem[] = []
-let coinStrategies: Record<string, string> = {} // { symbol: strategyName }
-let currentDecoupledList: string[] = []
-let wsClient: any = null // Store websocket client instance
-let streamGeneration: number = 0 // Prevent zombie ticks from re-adding symbols
-const lastTicks: Record<string, number> = {} // { symbol: timestamp } - Watchdog to detect silent individual disconnects
-const balances: Record<string, number> = { USDT: 0, BNB: 0 } // Store balances
-let consecutiveBullSignals: Record<string, { count: number; lastTickTime?: number }> = {}
-let cooldowns: Record<string, number> = {} // { symbol: timestamp } tracks when a coin was last sold
-const manualModes: Record<string, boolean> = {} // { symbol: true }
-const indicatorCache: Record<
-  string,
-  { strategyConfig?: StrategyConfig; rsi5m?: number | null; lastCalc: number }
-> = {} // { symbol: { strategyConfig, rsi5m, lastCalc } }
-const dailyBoxBounds: Record<string, BoxBounds> = {} // { symbol: { low, high, updatedAt } }
-const COOLDOWN_PERIOD = 15 * 60 * 1000 // 15 minutes in milliseconds
-// MAX_CONCURRENT_TRADES is now dynamic via currentSettings.max_concurrent_trades
+// Last price seen per symbol
+const lastPrices: Record<string, number> = {}
 
-// --- Tick Recording Buffer ---
-// Accumulates ticks in memory and flushes to PostgreSQL in batches
-// to avoid hammering the DB on every WebSocket message.
-let tickBuffer: Record<string, Tick[]> = {} // { symbol: [{ price, volume, recorded_at }] }
+// Exchange lot/tick size filters
+let symbolFilters: Record<string, Filter> = {}
 
-const bufferTick = (
-  symbol: string,
-  price: number,
-  volume: number,
-  trade_id: number | null = null,
-  timestamp: number | null = null
-) => {
-  if (!tickBuffer[symbol]) tickBuffer[symbol] = []
-  tickBuffer[symbol].push({
-    price,
-    volume,
-    recorded_at: timestamp ? new Date(timestamp) : new Date(),
-    trade_id: trade_id
-  })
-}
+// Balances
+export const balances: Record<string, number> = { USDT: 0, BNB: 0 }
 
-const flushTickBuffer = async () => {
-  const symbols = Object.keys(tickBuffer)
-  if (symbols.length === 0) return
-
-  // Swap buffer immediately so incoming ticks aren't missed during async writes
-  const snapshot = tickBuffer
-  tickBuffer = {}
-
-  for (const symbol of symbols) {
-    const ticks = snapshot[symbol]
-    if (!ticks || ticks.length === 0) continue
-    try {
-      await saveTickBatch(symbol, ticks)
-    } catch (e: any) {
-      console.error(`[TICK RECORD] Failed to save ${ticks.length} ticks for ${symbol}:`, e.message)
-    }
-  }
-}
-
-const startTickRecording = () => {
-  // Flush tick buffer to DB every 60 seconds
-  setInterval(flushTickBuffer, 60 * 1000)
-  console.log('[TICK RECORD] Tick recording started — flushing every 60s.')
-
-  // Prune ticks older than 30 days once per day
-  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
-  setInterval(() => {
-    pruneOldTicks(30).catch((e) => console.error('[TICK PRUNE] Error:', e.message))
-  }, TWENTY_FOUR_HOURS)
-}
-
-let symbolFilters: Record<string, Filter> = {} // symbol -> { stepSize }
-
-let currentMode = 'SIMULATION' // or 'LIVE'
-let botStartTime: number | null = null
+// Settings
 const currentSettings: Record<string, string> = {
-  trading_mode: 'SIMULATION',
-  capital_type: 'PERCENTAGE',
-  capital_value: '5',
-  active_strategy: 'SNIPER',
-  max_concurrent_trades: '3'
+  trading_mode: 'LIVE',
+  capital_type: 'FIXED',
+  capital_value: '100',
+  grid_step_percent: '3'
 }
 
-// UI Communication
-const botEvents = new EventEmitter()
+let currentMode = 'LIVE'
+let currentWhitelist: string[] = []
+let wsClient: any = null
+let streamGeneration = 0
+let botStartTime: number | null = null
+let isBotRunning = false
+let botIntervals: NodeJS.Timeout[] = []
 
-// Fetch stepSize and other filters from Binance
-const updateFilters = async () => {
+// Cooldown: prevent double-buying at same grid level (per symbol, ms timestamp)
+const levelCooldowns: Record<string, number> = {}
+const LEVEL_COOLDOWN_MS = 5000 // 5 second cooldown after a grid purchase
+
+export const botEvents = new EventEmitter()
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const getGridStep = (): number => {
+  const step = parseFloat(currentSettings.grid_step_percent || '3')
+  return isNaN(step) || step <= 0 ? 3 : step
+}
+
+const getShareAmount = (): number => {
+  const val = parseFloat(currentSettings.capital_value || '100')
+  return isNaN(val) || val <= 0 ? 100 : val
+}
+
+const roundToStep = (value: number, step: number): number => {
+  if (!step || step === 0) return value
+  const precision = step.toString().split('.')[1]?.length || 0
+  return parseFloat((Math.floor(value / step) * step).toFixed(precision))
+}
+
+const roundTick = (value: number, tickSize: number, direction: 'up' | 'down' = 'down'): number => {
+  if (!tickSize || tickSize === 0) return value
+  const precision = tickSize.toString().split('.')[1]?.length || 0
+  if (direction === 'up') return parseFloat((Math.ceil(value / tickSize) * tickSize).toFixed(precision))
+  return parseFloat((Math.floor(value / tickSize) * tickSize).toFixed(precision))
+}
+
+// ---------------------------------------------------------------------------
+// Exchange Filters
+// ---------------------------------------------------------------------------
+const updateFilters = async (): Promise<void> => {
   if (!apiKey) return
   try {
-    // Wrap exchangeInfo in a 10s timeout to prevent startup hangs
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Binance exchangeInfo timeout after 10s')), 10000)
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('exchangeInfo timeout')), 10000)
     )
-    const exchangeInfo = client.exchangeInfo()
-    const response = await Promise.race([exchangeInfo, timeout])
-
-    const filters = {}
-    response.data.symbols.forEach((s) => {
-      const lotSize = s.filters.find((f) => f.filterType === 'LOT_SIZE')
-      const priceFilter = s.filters.find((f) => f.filterType === 'PRICE_FILTER')
+    const response = await Promise.race([client.exchangeInfo(), timeout]) as any
+    const filters: Record<string, Filter> = {}
+    response.data.symbols.forEach((s: any) => {
+      const lotSize = s.filters.find((f: any) => f.filterType === 'LOT_SIZE')
+      const priceFilter = s.filters.find((f: any) => f.filterType === 'PRICE_FILTER')
       if (lotSize || priceFilter) {
         filters[s.symbol] = {
           stepSize: lotSize ? parseFloat(lotSize.stepSize) : 0,
@@ -185,1053 +143,899 @@ const updateFilters = async () => {
       }
     })
     symbolFilters = filters
-    console.log(`Updated exchange filters for ${Object.keys(symbolFilters).length} symbols.`)
+    console.log(`[FILTERS] Updated exchange filters for ${Object.keys(symbolFilters).length} symbols.`)
   } catch (e: any) {
-    console.error(
-      '[API WARNING] Error updating exchange filters (using cached/default):',
-      e.message
-    )
-    // We don't throw; let the bot try to continue with what it has
+    console.error('[FILTERS] Failed to update exchange filters:', e.message)
   }
 }
 
-// Fetch the actual free balance for a specific asset from Binance
-const fetchAssetBalance = async (asset) => {
-  if (!apiKey || !apiSecret) return 0
+// ---------------------------------------------------------------------------
+// Balance Fetch
+// ---------------------------------------------------------------------------
+const fetchBalances = async (): Promise<void> => {
+  if (!apiKey || !apiSecret) return
   try {
-    const response = await client.account()
-    const found = response.data.balances.find((b) => b.asset === asset)
-    return parseFloat(found ? found.free : 0)
+    const response = await client.account() as any
+    const usdt = response.data.balances.find((b: any) => b.asset === 'USDT')
+    const bnb = response.data.balances.find((b: any) => b.asset === 'BNB')
+    balances.USDT = parseFloat(usdt?.free || '0')
+    balances.BNB = parseFloat(bnb?.free || '0')
+    botEvents.emit('balance_update', { ...balances })
   } catch (e: any) {
-    console.error(`Error fetching balance for ${asset}:`, e)
-    return 0
+    console.error('[BALANCE] Failed to fetch balances:', e.message)
   }
 }
 
-// Historical Backfill to warm up indicators
-const backfillHistory = async (symbols) => {
-  console.log(`[BACKFILL] Pre-loading history for ${symbols.length} symbols...`)
+// ---------------------------------------------------------------------------
+// Grid Level - Buy a new share and place a limit sell
+// ---------------------------------------------------------------------------
+const executeGridBuy = async (symbol: string, currentPrice: number): Promise<void> => {
+  const shareAmount = getShareAmount()
+  const gridStep = getGridStep()
+  const stepMultiplier = gridStep / 100
 
-  for (const symbol of symbols) {
-    const strategyName = coinStrategies[symbol] || currentSettings.active_strategy || 'SNIPER'
-    const strategyConfig = STRATEGIES[strategyName]
-    const warmupSeconds = Math.max(strategyConfig.MACRO_LONG, 4500)
-    const candleCount = Math.ceil(warmupSeconds / 60) + 10
-    const limit = Math.min(1000, candleCount)
-    try {
-      const response = await client.klines(symbol, '1m', { limit })
-      const klines = response.data
-
-      klines.forEach((k) => {
-        const closePrice = parseFloat(k[4])
-        const volume = parseFloat(k[5])
-        // Stretch: Add 60 ticks per 1m candle to maintain the second-based timeframe of the MAs
-        for (let i = 0; i < 60; i++) {
-          regimeFilter.addTick(symbol, closePrice, 0, strategyConfig.HISTORY_LENGTH, volume / 60)
-        }
-      })
-      console.log(
-        `[BACKFILL] ${symbol}: Loaded ${klines.length} minutes of history (${klines.length * 60} ticks).`
-      )
-    } catch (e: any) {
-      console.error(`[BACKFILL ERROR] Failed for ${symbol}:`, e.message)
-    }
-  }
-}
-
-// Trade Execution Logic
-const executeTrade = async (symbol, side, price, reason = 'UNKNOWN') => {
-  let quantity
-  let limitPrice: number | null = null
-  let capitalAmount = 0
-  const strategyName = coinStrategies[symbol] || currentSettings.active_strategy || 'SNIPER'
-  const strategyConfig = STRATEGIES[strategyName]
-  const tolerance = strategyConfig.SLIPPAGE_TOLERANCE || 0.001
-
-  if (side === 'BUY') {
-    capitalAmount = 100 // default
-    const capVal = parseFloat(currentSettings.capital_value) || 0
-    if (currentSettings.capital_type === 'PERCENTAGE') {
-      const investedVal = Object.values(activePositions).reduce(
-        (sum, pos) => sum + pos.quantity * pos.entryPrice,
-        0
-      )
-      const totalEquity = balances.USDT + investedVal
-      capitalAmount = totalEquity * (capVal / 100)
-      console.log(
-        `[SIZING] Total Equity: $${totalEquity.toFixed(2)} (Free: $${balances.USDT.toFixed(2)}, Invested: $${investedVal.toFixed(2)}). Slot Size: $${capitalAmount.toFixed(2)}`
-      )
-    } else {
-      capitalAmount = capVal // Fixed amount
-    }
-
-    if (capitalAmount > balances.USDT) {
-      console.log(
-        `[SKIP BUY] ${symbol}: Need $${capitalAmount.toFixed(2)} but only $${balances.USDT.toFixed(2)} available.`
-      )
-      return
-    }
-
-    quantity = capitalAmount / price
-    limitPrice = price * (1 + tolerance)
-  } else {
-    quantity = activePositions[symbol].quantity
-    limitPrice = price * (1 - tolerance)
+  if (currentMode === 'LIVE' && balances.USDT < shareAmount) {
+    console.log(`[GRID] ${symbol}: Insufficient USDT (${balances.USDT.toFixed(2)} < ${shareAmount}). Skipping grid buy.`)
+    return
   }
 
-  // Apply Exchange Filters (Rounding to stepSize and tickSize)
   const filter = symbolFilters[symbol]
+  let quantity = shareAmount / currentPrice
+  let buyFillPrice = currentPrice
+  let sellLimitPrice = currentPrice * (1 + stepMultiplier)
+
   if (filter) {
-    if (filter.stepSize) {
-      const roundedQty = Math.floor(quantity / filter.stepSize) * filter.stepSize
-      const precision = filter.stepSize.toString().split('.')[1]?.length || 0
-      quantity = parseFloat(roundedQty.toFixed(precision))
-    }
-    if (filter.tickSize && limitPrice) {
-      // For buys, round UP to ensure we don't accidentally exceed tolerance downward.
-      // For sells, round DOWN to ensure we don't accidentally exceed tolerance upward.
-      if (limitPrice !== null) {
-        const roundedPrice =
-          side === 'BUY'
-            ? Math.ceil(limitPrice / filter.tickSize) * filter.tickSize
-            : Math.floor(limitPrice / filter.tickSize) * filter.tickSize
-        const precision = filter.tickSize.toString().split('.')[1]?.length || 0
-        limitPrice = parseFloat(roundedPrice.toFixed(precision))
-      }
-    }
+    quantity = roundToStep(quantity, filter.stepSize)
+    sellLimitPrice = roundTick(sellLimitPrice, filter.tickSize, 'up')
   }
 
-  // === LIVE MODE: Execute real Binance orders ===
+  if (quantity <= 0) {
+    console.log(`[GRID] ${symbol}: Quantity rounded to 0. Skipping.`)
+    return
+  }
+
+  console.log(`[GRID BUY] ${symbol}: Buying ${quantity.toFixed(6)} @ ~$${currentPrice.toFixed(4)}. Will sell @ $${sellLimitPrice.toFixed(4)} (+${gridStep}%)`)
+
+  let binanceSellOrderId: string | undefined
+
   if (currentMode === 'LIVE') {
     try {
-      let orderResult
-      const useLimitIOC = reason !== 'HARD_STOP' // All TP and Buys use LIMIT IOC
+      // Place market buy
+      const buyResult = await client.newOrder(symbol, 'BUY', 'MARKET', {
+        quoteOrderQty: shareAmount.toFixed(2)
+      }) as any
 
-      if (side === 'BUY') {
-        if (useLimitIOC && limitPrice !== null) {
-          console.log(
-            `[LIVE ORDER - LIMIT IOC] Placing BUY on ${symbol} for ${quantity} @ $${limitPrice}. Tolerance: ${tolerance * 100}%`
-          )
-          orderResult = await client.newOrder(symbol, 'BUY', 'LIMIT', {
-            quantity: quantity.toString(),
-            price: limitPrice.toString(),
-            timeInForce: 'IOC'
-          })
-        } else {
-          console.log(
-            `[LIVE ORDER] Placing MARKET BUY on ${symbol} for $${capitalAmount.toFixed(2)}...`
-          )
-          orderResult = await client.newOrder(symbol, 'BUY', 'MARKET', {
-            quoteOrderQty: capitalAmount.toFixed(2)
-          })
-        }
-      } else {
-        if (useLimitIOC && limitPrice !== null) {
-          console.log(
-            `[LIVE ORDER - LIMIT IOC] Placing SELL on ${symbol} for ${quantity} @ $${limitPrice}. Tolerance: ${tolerance * 100}%`
-          )
-          orderResult = await client.newOrder(symbol, 'SELL', 'LIMIT', {
-            quantity: quantity.toString(),
-            price: limitPrice.toString(),
-            timeInForce: 'IOC'
-          })
-        } else {
-          console.log(`[LIVE ORDER] Placing MARKET SELL on ${symbol} for ${quantity} units...`)
-          orderResult = await client.newOrder(symbol, 'SELL', 'MARKET', {
-            quantity: quantity.toString()
-          })
-        }
-      }
-
-      // Extract actual fill price and quantity from the Binance response
-      const fills = orderResult.data.fills || []
+      // Extract actual fill
+      const fills = buyResult.data.fills || []
       if (fills.length > 0) {
-        const totalQty = fills.reduce((sum, f) => sum + parseFloat(f.qty), 0)
-        const totalCost = fills.reduce((sum, f) => sum + parseFloat(f.price) * parseFloat(f.qty), 0)
-        const avgFillPrice = totalCost / totalQty
-        price = avgFillPrice // Use actual fill price
-        quantity = totalQty // Use actual fill quantity
-        console.log(`[LIVE FILL] ${side} ${symbol}: ${totalQty} @ avg $${avgFillPrice.toFixed(6)}`)
+        const totalQty = fills.reduce((sum: number, f: any) => sum + parseFloat(f.qty), 0)
+        const totalCost = fills.reduce((sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty), 0)
+        buyFillPrice = totalCost / totalQty
+        quantity = totalQty
+        console.log(`[GRID FILL] ${symbol} BUY: ${quantity.toFixed(6)} @ avg $${buyFillPrice.toFixed(6)}`)
       }
 
-      // Refresh balance immediately after a live trade
+      // Recalculate sell price based on actual fill
+      sellLimitPrice = buyFillPrice * (1 + stepMultiplier)
+      if (filter) {
+        quantity = roundToStep(quantity, filter.stepSize)
+        sellLimitPrice = roundTick(sellLimitPrice, filter.tickSize, 'up')
+      }
+
+      // Place GTC limit sell immediately
+      try {
+        const sellResult = await client.newOrder(symbol, 'SELL', 'LIMIT', {
+          quantity: quantity.toString(),
+          price: sellLimitPrice.toFixed(filter?.tickSize ? filter.tickSize.toString().split('.')[1]?.length || 2 : 4),
+          timeInForce: 'GTC'
+        }) as any
+
+        binanceSellOrderId = sellResult.data.orderId?.toString()
+        console.log(`[GRID SELL ORDER] ${symbol}: GTC SELL placed @ $${sellLimitPrice.toFixed(4)} (orderId: ${binanceSellOrderId})`)
+      } catch (sellErr: any) {
+        console.error(`[GRID] Failed to place limit sell for ${symbol}:`, sellErr.response?.data || sellErr.message)
+        // Still record the grid level even if sell order failed — user can manage manually
+      }
+
       fetchBalances()
     } catch (e: any) {
-      console.error(
-        `[LIVE ORDER FAILED] ${side} ${symbol}:`,
-        e.response ? e.response.data : e.message
-      )
-      return // Abort — do not record a trade that failed on the exchange
+      console.error(`[GRID BUY FAILED] ${symbol}:`, e.response?.data || e.message)
+      return
     }
+  } else {
+    // SIMULATION: track the pending sell in memory only
+    buyFillPrice = currentPrice
+    sellLimitPrice = currentPrice * (1 + stepMultiplier)
+    if (filter) sellLimitPrice = roundTick(sellLimitPrice, filter.tickSize, 'up')
+    // Deduct from simulated balance
+    balances.USDT = Math.max(0, balances.USDT - shareAmount)
+    botEvents.emit('balance_update', { ...balances })
   }
 
-  let pnl = 0
-  let roi = 0
-  if (side === 'SELL') {
-    const entryPrice = activePositions[symbol].entryPrice
-    pnl = (price - entryPrice) * quantity
-    roi = (price - entryPrice) / entryPrice
-    delete activePositions[symbol]
-    await deletePosition(symbol, currentMode) // Persist closure
+  const cost = buyFillPrice * quantity
 
-    // Apply strategy cooldown to prevent immediate reentry into chop
-    cooldowns[symbol] = Date.now()
-  } else if (side === 'BUY') {
-    const currentPos = activePositions[symbol]
-    if (currentPos) {
-      // COST AVERAGING LOGIC: Calculate weighted average
-      const oldQty = currentPos.quantity
-      const oldEntry = currentPos.entryPrice
-      const newTotalQty = oldQty + quantity
-      const newAveragedEntry = (oldEntry * oldQty + price * quantity) / newTotalQty
+  // Persist grid level to DB
+  const levelId = saveGridLevel({
+    symbol,
+    mode: currentMode,
+    buyPrice: buyFillPrice,
+    sellPrice: sellLimitPrice,
+    quantity,
+    cost,
+    binanceSellOrderId
+  })
 
-      console.log(
-        `[DCA] Averaging ${symbol}: Old Entry $${oldEntry.toFixed(6)}, New Entry $${newAveragedEntry.toFixed(6)}. Total Qty: ${newTotalQty.toFixed(6)}`
-      )
+  // Update in-memory grid levels
+  if (!gridLevels[symbol]) gridLevels[symbol] = []
+  gridLevels[symbol].push({
+    id: levelId,
+    symbol,
+    mode: currentMode,
+    buyPrice: buyFillPrice,
+    sellPrice: sellLimitPrice,
+    quantity,
+    cost,
+    status: 'PENDING_SELL',
+    binanceSellOrderId
+  })
 
-      activePositions[symbol].entryPrice = newAveragedEntry
-      activePositions[symbol].quantity = newTotalQty
-      activePositions[symbol].highWaterMark = price // Reset HWM to current price to prevent immediate trailing stop triggers
-      await savePosition(symbol, activePositions[symbol], currentMode)
-    } else {
-      // Standard first entry
-      const isManual = !!manualModes[symbol]
-      const position = {
-        entryPrice: price,
-        quantity,
-        highWaterMark: price,
-        mode: currentMode,
-        isManual
-      }
-      activePositions[symbol] = position
-      await savePosition(symbol, position, currentMode) // Persist opening
-    }
+  // Log the buy trade
+  logTrade({
+    symbol,
+    side: 'BUY',
+    price: buyFillPrice,
+    quantity,
+    pnl: 0,
+    roi: 0,
+    reason: 'GRID_BUY'
+  }, currentMode)
 
-    // Fetch actual Binance balance for this asset (includes dust) so sell quantity is pre-loaded
-    const baseAsset = symbol.replace('USDT', '')
-    const actualBalance = await fetchAssetBalance(baseAsset)
-    if (actualBalance > activePositions[symbol].quantity) {
-      console.log(
-        `[DUST SWEEP] ${symbol}: Bot recorded ${activePositions[symbol].quantity.toFixed(6)}, but account holds ${actualBalance.toFixed(6)}. Using full balance.`
-      )
-      activePositions[symbol].quantity = actualBalance
-      await savePosition(symbol, activePositions[symbol], currentMode)
-    }
-  }
-
-  // Refresh streams to ensure we are subbed to active positions even if not in whitelist
-  refreshStreams()
-
-  // Log to DB
-  const currentRegime = regimeFilter.getRegime(symbol)
-  await logTrade(
-    {
-      symbol,
-      side,
-      price,
-      quantity,
-      pnl,
-      roi,
-      algo_regime: currentRegime.micro || currentRegime,
-      reason
-    },
-    currentMode
-  )
-
-  // Broadcast to UI
   botEvents.emit('trade_executed', {
     symbol,
-    side,
-    price,
+    side: 'BUY',
+    price: buyFillPrice,
     quantity,
-    pnl,
-    roi,
-    regime: currentRegime.micro || currentRegime,
+    pnl: 0,
+    roi: 0,
+    reason: 'GRID_BUY',
     timestamp: new Date()
   })
 
-  console.log(`Executed ${side} on ${symbol} at ${price}. PnL: ${pnl.toFixed(4)}`)
-
-  // Force immediate UI update
-  try {
-    const {
-      micro: regime,
-      macro: macroRegime,
-      isBouncing,
-      zScore,
-      autocorrelation,
-      obi
-    } = regimeFilter.getRegime(symbol, strategyConfig)
-    const cache = indicatorCache[symbol] || { lastCalc: 0 }
-    const isManual = !!manualModes[symbol]
-    const boxBounds = dailyBoxBounds[symbol] || null
-    broadcastSymbolUpdate({
-      symbol,
-      currentPrice: price,
-      regime,
-      macroRegime,
-      isBouncing,
-      rsi5m: cache.rsi5m || null,
-      isManual,
-      strategyConfig,
-      boxBounds,
-      zScore,
-      autocorrelation,
-      obi
-    })
-  } catch (e: any) {
-    console.error(`[FORCE REFRESH FAIL] ${symbol}:`, e.message)
-  }
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || currentPrice)
 }
 
-// Periodic fetch of daily high/low for the BOX strategy
-const refreshBoxBounds = async () => {
-  const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-  const symbolsToFetch = Array.from(new Set([...whitelistSymbols, ...Object.keys(activePositions)]))
+// ---------------------------------------------------------------------------
+// Grid Level - Handle a sell fill (from simulation or user data stream)
+// ---------------------------------------------------------------------------
+const handleGridSellFill = async (
+  symbol: string,
+  level: GridLevel,
+  fillPrice: number
+): Promise<void> => {
+  const pnl = (fillPrice - level.buyPrice) * level.quantity
+  const roi = (fillPrice - level.buyPrice) / level.buyPrice
 
-  for (const symbol of symbolsToFetch) {
-    if (symbol === 'BTCUSDT') continue
-    try {
-      const response = await client.klines(symbol, '1d', { limit: 2 })
-      const klines = response.data
-      if (klines && klines.length >= 2) {
-        const prevDay = klines[0] // Index 0 is the previous completed day
-        dailyBoxBounds[symbol] = {
-          low: parseFloat(prevDay[3]),
-          high: parseFloat(prevDay[2]),
-          updatedAt: Date.now()
-        }
-      }
-    } catch (e: any) {
-      console.error(`[BOX] Failed to fetch bounds for ${symbol}:`, e.message)
-    }
-  }
-  console.log(`[BOX] Refreshed daily bounds for ${Object.keys(dailyBoxBounds).length} symbols.`)
-}
+  console.log(`[GRID SELL FILLED] ${symbol}: Sold ${level.quantity.toFixed(6)} @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)} (${(roi * 100).toFixed(2)}%)`)
 
-// Process incoming WebSocket price updates
-const processTick = async (symbol, currentPrice, currentVolume, generation, tradeId, timestamp) => {
-  // Ignore ticks from old/dead streams
-  if (generation !== streamGeneration) return
+  markGridLevelFilled(level.id)
 
-  const now = Date.now()
-  const prevTickTime = lastTicks[symbol] || now
-  lastTicks[symbol] = now
-
-  const strategyName = coinStrategies[symbol] || currentSettings.active_strategy || 'SNIPER'
-  const baseConfig = STRATEGIES[strategyName]
-
-  // Tick Padding: If more than 1.5 seconds have passed since the last tick,
-  // inject synthetic ticks to keep MAs synchronized with 1-second time units.
-  const gapMs = now - prevTickTime
-  if (gapMs > 1500) {
-    const secondsToPad = Math.floor(gapMs / 1000)
-    // Cap padding to 5 minutes to avoid memory spikes during long outages
-    const safePad = Math.min(300, secondsToPad)
-    for (let i = 0; i < safePad; i++) {
-      regimeFilter.addTick(
-        symbol,
-        currentPrice,
-        0,
-        baseConfig.HISTORY_LENGTH,
-        0,
-        baseConfig.VOLUME_CAP_MULT
-      )
-    }
+  // Remove from in-memory
+  if (gridLevels[symbol]) {
+    gridLevels[symbol] = gridLevels[symbol].filter((l) => l.id !== level.id)
   }
 
-  regimeFilter.addTick(
+  // Update simulated USDT balance
+  if (currentMode === 'SIMULATION') {
+    balances.USDT += fillPrice * level.quantity
+    botEvents.emit('balance_update', { ...balances })
+  }
+
+  logTrade({
     symbol,
-    currentPrice,
-    currentVolume,
-    baseConfig.HISTORY_LENGTH,
-    null,
-    baseConfig.VOLUME_CAP_MULT
-  )
-  bufferTick(symbol, currentPrice, currentVolume, tradeId, timestamp) // Record for backtest history
-  const {
-    micro: regime,
-    macro: macroRegime,
-    isBouncing,
-    zScore,
-    autocorrelation,
-    obi,
-    atr
-  } = regimeFilter.getRegime(symbol, baseConfig)
+    side: 'SELL',
+    price: fillPrice,
+    quantity: level.quantity,
+    pnl,
+    roi,
+    reason: 'GRID_SELL_FILL'
+  }, currentMode)
 
-  // Filter out BNB pairs
-  if (symbol.startsWith('BNB')) return
-
-  const symbolHistory = regimeFilter.getHistory(symbol)
-
-  // Performance Throttling: Recalculate indicators at most once every 250ms per symbol.
-  // In high-volatility spikes, we can see 100+ aggTrades per second; recalculating
-  // O(n) history on every tick is a massive event-loop bottleneck.
-  const cache = indicatorCache[symbol] || { lastCalc: 0 }
-  if (now - cache.lastCalc > 250) {
-    cache.strategyConfig = getScaledConfig(symbolHistory, baseConfig)
-    cache.rsi5m = calculateRSI(symbolHistory, 14, 300)
-    cache.lastCalc = now
-    indicatorCache[symbol] = cache
-  }
-
-  const strategyConfig = cache.strategyConfig
-  const rsi5m = cache.rsi5m
-
-  const isManual = !!manualModes[symbol]
-
-  const boxBounds = dailyBoxBounds[symbol] || null
-
-  // Check existing positions
-  if (activePositions[symbol]) {
-    const entryPrice = activePositions[symbol].entryPrice
-    let highWaterMark = activePositions[symbol].highWaterMark
-
-    // Update High Water Mark
-    if (currentPrice > highWaterMark) {
-      activePositions[symbol].highWaterMark = currentPrice
-      highWaterMark = currentPrice
-      // Non-blocking background save to prevent DB latency from stalling the tick loop
-      updateHighWaterMark(symbol, currentPrice, currentMode).catch((e) =>
-        console.error(`[DB ERROR] HWM save failed for ${symbol}:`, e)
-      )
-    }
-
-    if (!isManual) {
-      const trailStop = checkTrailingStop(
-        currentPrice,
-        entryPrice,
-        highWaterMark,
-        strategyConfig,
-        boxBounds,
-        atr,
-        regime
-      )
-
-      if (trailStop.shouldSell) {
-        console.log(
-          `[${trailStop.reason}] Selling ${symbol}. High was ${highWaterMark}. Sell at ${currentPrice}. Macro: ${macroRegime}`
-        )
-        await executeTrade(symbol, 'SELL', currentPrice, trailStop.reason)
-      }
-    }
-  }
-  broadcastSymbolUpdate({
+  botEvents.emit('trade_executed', {
     symbol,
-    currentPrice,
-    regime,
-    macroRegime,
-    isBouncing,
-    rsi5m,
-    isManual,
-    strategyConfig,
-    boxBounds,
-    zScore,
-    autocorrelation,
-    obi
+    side: 'SELL',
+    price: fillPrice,
+    quantity: level.quantity,
+    pnl,
+    roi,
+    reason: 'GRID_SELL_FILL',
+    timestamp: new Date()
   })
+
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || fillPrice)
 }
 
-const broadcastSymbolUpdate = ({
-  symbol,
-  currentPrice,
-  regime,
-  macroRegime,
-  isBouncing,
-  rsi5m,
-  isManual,
-  strategyConfig,
-  boxBounds,
-  zScore,
-  autocorrelation,
-  obi
-}) => {
-  let trailingStatus = '-'
-  const position = activePositions[symbol]
-  if (position) {
-    const entryPrice = position.entryPrice
-    const highestRoi = (position.highWaterMark - entryPrice) / entryPrice
-    if (highestRoi >= strategyConfig.TRAIL_ACTIVATION) trailingStatus = 'TRAILING'
-    else if (
-      strategyConfig.MID_TRAIL_ACTIVATION &&
-      highestRoi >= strategyConfig.MID_TRAIL_ACTIVATION
-    )
-      trailingStatus = 'MID_TRAIL'
-    else trailingStatus = 'PROTECTIVE'
+// ---------------------------------------------------------------------------
+// Core Price Tick Handler
+// ---------------------------------------------------------------------------
+const processTick = (symbol: string, currentPrice: number): void => {
+  lastPrices[symbol] = currentPrice
+
+  const state = gridState[symbol]
+  const levels = gridLevels[symbol] || []
+
+  // --- SIMULATION: Check if any pending limit sells are now fulfilled ---
+  if (currentMode === 'SIMULATION') {
+    for (const level of [...levels]) {
+      if (currentPrice >= level.sellPrice) {
+        handleGridSellFill(symbol, level, level.sellPrice).catch(console.error)
+      }
+    }
   }
+
+  // No base share registered for this symbol — nothing to do
+  if (!state) {
+    broadcastMarketUpdate(symbol, currentPrice)
+    return
+  }
+
+  const gridStep = getGridStep()
+  const stepMult = gridStep / 100
+
+  // Determine the reference price for the next buy:
+  // The next buy triggers at 3% BELOW whichever is lower: basePrice or the lowest current grid level buy
+  const lowestLevelBuyPrice = levels.length > 0
+    ? Math.min(...levels.map((l) => l.buyPrice))
+    : null
+  const referencePrice = lowestLevelBuyPrice !== null
+    ? Math.min(state.basePrice, lowestLevelBuyPrice)
+    : state.basePrice
+  const nextBuyTrigger = referencePrice * (1 - stepMult)
+
+  // --- UP 3%: Move base price up, no trade ---
+  if (currentPrice >= state.basePrice * (1 + stepMult)) {
+    const oldBase = state.basePrice
+    const newBase = currentPrice
+    state.basePrice = newBase
+    saveGridState(symbol, state, currentMode)
+    console.log(`[GRID UP] ${symbol}: Base price moved from $${oldBase.toFixed(4)} → $${newBase.toFixed(4)} (+${gridStep}%). No trade.`)
+    broadcastMarketUpdate(symbol, currentPrice)
+    return
+  }
+
+  // --- DOWN 3%: Buy a new grid level ---
+  const cooldownKey = `${symbol}_${nextBuyTrigger.toFixed(6)}`
+  const lastBuy = levelCooldowns[cooldownKey] || 0
+  if (currentPrice <= nextBuyTrigger && Date.now() - lastBuy > LEVEL_COOLDOWN_MS) {
+    levelCooldowns[cooldownKey] = Date.now()
+    console.log(`[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`)
+    executeGridBuy(symbol, currentPrice).catch(console.error)
+  }
+
+  broadcastMarketUpdate(symbol, currentPrice)
+}
+
+// ---------------------------------------------------------------------------
+// Market Update Broadcast
+// ---------------------------------------------------------------------------
+const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
+  const state = gridState[symbol]
+  const levels = gridLevels[symbol] || []
+  const gridStep = getGridStep()
+
+  let pctFromBase: number | null = null
+  if (state) {
+    pctFromBase = ((currentPrice - state.basePrice) / state.basePrice) * 100
+  }
+
+  // Unrealized PnL from base share
+  let baseUnrealizedPnl = 0
+  let baseUnrealizedRoi = 0
+  if (state) {
+    baseUnrealizedPnl = (currentPrice - state.basePrice) * state.baseQuantity
+    baseUnrealizedRoi = (currentPrice - state.basePrice) / state.basePrice
+  }
+
+  // Unrealized PnL from grid levels
+  const gridUnrealizedPnl = levels.reduce((sum, l) => {
+    return sum + (currentPrice - l.buyPrice) * l.quantity
+  }, 0)
 
   botEvents.emit('market_update', {
     symbol,
     currentPrice,
-    regime,
-    macroRegime,
-    position: position || null,
-    confirmationCount: consecutiveBullSignals[symbol] ? consecutiveBullSignals[symbol].count : 0,
-    manual: isManual,
-    atrMultiplier: strategyConfig.atrMultiplier || 1.0,
-    isBouncing: isBouncing || false,
-    rsi5m: rsi5m !== null ? Math.round(rsi5m) : null,
-    trailingStatus,
+    basePrice: state?.basePrice ?? null,
+    baseQuantity: state?.baseQuantity ?? null,
+    baseEntryCost: state?.baseEntryCost ?? null,
+    pctFromBase,
+    gridLevels: levels.map((l) => ({
+      id: l.id,
+      buyPrice: l.buyPrice,
+      sellPrice: l.sellPrice,
+      quantity: l.quantity,
+      cost: l.cost,
+      pctChange: ((currentPrice - l.buyPrice) / l.buyPrice) * 100
+    })),
+    gridStep,
+    baseUnrealizedPnl,
+    baseUnrealizedRoi,
+    gridUnrealizedPnl,
+    totalUnrealizedPnl: baseUnrealizedPnl + gridUnrealizedPnl,
     botStartTime,
-    trailActivation: strategyConfig.TRAIL_ACTIVATION,
-    midTrailActivation: strategyConfig.MID_TRAIL_ACTIVATION,
-    boxBounds,
-    zScore,
-    autocorrelation,
-    obi
+    hasBaseShare: !!state
   })
 }
 
-const connectWebSocket = () => {
+// ---------------------------------------------------------------------------
+// Register Base Share (called from UI / manual trade)
+// ---------------------------------------------------------------------------
+const registerBaseShare = async (
+  symbol: string,
+  price: number,
+  quantity: number
+): Promise<void> => {
+  const cost = price * quantity
+  gridState[symbol] = { basePrice: price, baseQuantity: quantity, baseEntryCost: cost }
+  saveGridState(symbol, gridState[symbol], currentMode)
+
+  console.log(`[BASE SHARE] ${symbol}: Registered base share @ $${price.toFixed(4)}, qty: ${quantity.toFixed(6)}, cost: $${cost.toFixed(2)}`)
+
+  logTrade({
+    symbol,
+    side: 'BUY',
+    price,
+    quantity,
+    pnl: 0,
+    roi: 0,
+    reason: 'BASE_SHARE'
+  }, currentMode)
+
+  botEvents.emit('trade_executed', {
+    symbol,
+    side: 'BUY',
+    price,
+    quantity,
+    pnl: 0,
+    roi: 0,
+    reason: 'BASE_SHARE',
+    timestamp: new Date()
+  })
+
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || price)
+}
+
+// ---------------------------------------------------------------------------
+// Sell Base Share (manual action)
+// ---------------------------------------------------------------------------
+const sellBaseShare = async (symbol: string): Promise<void> => {
+  const state = gridState[symbol]
+  if (!state) {
+    throw new Error(`No base share registered for ${symbol}`)
+  }
+
+  const currentPrice = lastPrices[symbol] || state.basePrice
+  let fillPrice = currentPrice
+
+  if (currentMode === 'LIVE') {
+    const filter = symbolFilters[symbol]
+    let qty = roundToStep(state.baseQuantity, filter?.stepSize || 0)
+    try {
+      const result = await client.newOrder(symbol, 'SELL', 'MARKET', {
+        quantity: qty.toString()
+      }) as any
+      const fills = result.data.fills || []
+      if (fills.length > 0) {
+        const totalQty = fills.reduce((s: number, f: any) => s + parseFloat(f.qty), 0)
+        const totalCost = fills.reduce((s: number, f: any) => s + parseFloat(f.price) * parseFloat(f.qty), 0)
+        fillPrice = totalCost / totalQty
+        qty = totalQty
+      }
+      fetchBalances()
+    } catch (e: any) {
+      console.error(`[SELL BASE FAILED] ${symbol}:`, e.response?.data || e.message)
+      throw e
+    }
+  }
+
+  const pnl = (fillPrice - state.baseEntryCost / state.baseQuantity) * state.baseQuantity
+  const roi = (fillPrice - state.baseEntryCost / state.baseQuantity) / (state.baseEntryCost / state.baseQuantity)
+
+  logTrade({
+    symbol,
+    side: 'SELL',
+    price: fillPrice,
+    quantity: state.baseQuantity,
+    pnl,
+    roi,
+    reason: 'MANUAL_BASE_SELL'
+  }, currentMode)
+
+  botEvents.emit('trade_executed', {
+    symbol,
+    side: 'SELL',
+    price: fillPrice,
+    quantity: state.baseQuantity,
+    pnl,
+    roi,
+    reason: 'MANUAL_BASE_SELL',
+    timestamp: new Date()
+  })
+
+  delete gridState[symbol]
+  deleteGridState(symbol, currentMode)
+  console.log(`[BASE SHARE SOLD] ${symbol}: Sold @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)}`)
+  broadcastMarketUpdate(symbol, fillPrice)
+}
+
+// ---------------------------------------------------------------------------
+// Cancel all open grid levels for a symbol (live cancels on Binance)
+// ---------------------------------------------------------------------------
+const clearGridLevels = async (symbol: string): Promise<void> => {
+  const levels = gridLevels[symbol] || []
+  if (currentMode === 'LIVE') {
+    for (const level of levels) {
+      if (level.binanceSellOrderId) {
+        try {
+          await client.cancelOrder(symbol, { orderId: level.binanceSellOrderId })
+          console.log(`[GRID] Cancelled order ${level.binanceSellOrderId} for ${symbol}`)
+        } catch (e: any) {
+          console.error(`[GRID] Failed to cancel order ${level.binanceSellOrderId}:`, e.message)
+        }
+      }
+    }
+  }
+  deleteAllGridLevels(symbol, currentMode)
+  gridLevels[symbol] = []
+  console.log(`[GRID] Cleared all grid levels for ${symbol}`)
+  broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
+}
+
+// ---------------------------------------------------------------------------
+// User Data Stream — detect live limit sell fills
+// Direct REST + raw WebSocket (bypasses connector's broken listen key path)
+// ---------------------------------------------------------------------------
+
+// Post/PUT to Binance REST without the connector (avoids 410 bugs)
+// Tries api.binance.com first, then falls back to api.binance.us
+const BINANCE_HOSTS = ['api.binance.com', 'api.binance.us']
+let activeHost = BINANCE_HOSTS[0]
+
+// Simple unsigned request (userDataStream only needs API key, no signature)
+const binanceRestRequestToHost = (
+  hostname: string,
+  method: 'POST' | 'PUT' | 'DELETE',
+  reqPath: string,
+  params: Record<string, string> = {}
+): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (!apiKey) return reject(new Error('No API key'))
+
+    const queryString = Object.keys(params).length
+      ? new URLSearchParams(params).toString()
+      : ''
+    const fullPath = queryString ? `${reqPath}?${queryString}` : reqPath
+
+    const options = {
+      hostname,
+      port: 443,
+      path: fullPath,
+      method,
+      headers: {
+        'X-MBX-APIKEY': apiKey,
+        'Content-Type': 'application/json',
+        'Content-Length': 0
+      }
+    }
+
+    const req = https.request(options, (res) => {
+      let body = ''
+      res.on('data', (chunk) => { body += chunk })
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body)
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(`HTTP ${res.statusCode}: ${parsed.msg || body}`))
+          } else {
+            resolve(parsed)
+          }
+        } catch {
+          reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`))
+        }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+const binanceRestRequest = async (
+  method: 'POST' | 'PUT' | 'DELETE',
+  reqPath: string,
+  params: Record<string, string> = {}
+): Promise<any> => {
+  try {
+    const result = await binanceRestRequestToHost(activeHost, method, reqPath, params)
+    return result
+  } catch (e: any) {
+    // Trigger fallback on any 4xx error or HTML response (geo-block returns raw HTML 410)
+    const isGeoBlocked = e.message.includes('410')
+      || e.message.includes('403')
+      || e.message.includes('Gone')
+      || e.message.includes('HTTP 4')
+    const otherHost = BINANCE_HOSTS.find((h) => h !== activeHost)
+    if (otherHost && isGeoBlocked) {
+      console.log(`[USER DATA STREAM] ${activeHost} blocked (${e.message.substring(0, 60)}), trying ${otherHost}...`)
+      const result = await binanceRestRequestToHost(otherHost, method, reqPath, params)
+      activeHost = otherHost // Remember which one works
+      console.log(`[USER DATA STREAM] Switched to ${activeHost}.`)
+      return result
+    }
+    throw e
+  }
+}
+
+const startUserDataStream = async (): Promise<void> => {
+  if (!apiKey || !apiSecret) {
+    console.log('[USER DATA STREAM] No API credentials — skipping. Fill detection disabled.')
+    return
+  }
+
+  let listenKey: string
+  let udWs: WebSocket | null = null
+  let reconnectTimeout: NodeJS.Timeout | null = null
+  const isShuttingDown = false
+
+  const connectWS = (key: string): void => {
+    if (udWs) {
+      try { udWs.terminate() } catch { /* ignore */ }
+    }
+    const wsUrl = `wss://stream.binance.com:9443/ws/${key}`
+    console.log(`[USER DATA STREAM] Connecting to ${wsUrl}`)
+    udWs = new WebSocket(wsUrl)
+
+    udWs.on('open', () => {
+      console.log('[USER DATA STREAM] Connected. Watching for order fills...')
+    })
+
+    udWs.on('message', (raw: WebSocket.RawData) => {
+      try {
+        const event = JSON.parse(raw.toString())
+        if (event.e === 'executionReport' && event.X === 'FILLED' && event.S === 'SELL') {
+          const symbol: string = event.s
+          const orderId: string = event.i?.toString()
+          const fillPrice: number = parseFloat(event.L)
+          const levels = gridLevels[symbol] || []
+          const matchedLevel = levels.find((l) => l.binanceSellOrderId === orderId)
+          if (matchedLevel) {
+            console.log(`[USER DATA] Grid sell fill detected for ${symbol} — order ${orderId}`)
+            handleGridSellFill(symbol, matchedLevel, fillPrice).catch(console.error)
+          }
+        }
+      } catch { /* ignore */ }
+    })
+
+    udWs.on('error', (err) => {
+      console.error('[USER DATA STREAM] WebSocket error:', err.message)
+    })
+
+    udWs.on('close', (code) => {
+      console.log(`[USER DATA STREAM] Disconnected (code: ${code})`)
+      if (!isShuttingDown) {
+        // Auto-reconnect after 5 seconds
+        if (reconnectTimeout) clearTimeout(reconnectTimeout)
+        reconnectTimeout = setTimeout(() => {
+          console.log('[USER DATA STREAM] Reconnecting...')
+          connectWS(listenKey)
+        }, 5000)
+      }
+    })
+  }
+
+  try {
+    const result = await binanceRestRequest('POST', '/api/v3/userDataStream')
+    listenKey = result.listenKey
+    if (!listenKey) throw new Error(`No listenKey in response: ${JSON.stringify(result)}`)
+    console.log('[USER DATA STREAM] Listen key obtained.')
+
+    connectWS(listenKey)
+
+    // Binance requires a PUT every 29 min to keep the listen key alive
+    setInterval(async () => {
+      try {
+        await binanceRestRequest('PUT', '/api/v3/userDataStream', { listenKey })
+        console.log('[USER DATA STREAM] Listen key renewed.')
+      } catch (e: any) {
+        console.error('[USER DATA STREAM] Failed to renew listen key:', e.message)
+        // Re-obtain a fresh listen key and reconnect
+        try {
+          const fresh = await binanceRestRequest('POST', '/api/v3/userDataStream')
+          listenKey = fresh.listenKey
+          connectWS(listenKey)
+        } catch { /* ignore */ }
+      }
+    }, 29 * 60 * 1000) // 29 min — slightly before the 30 min timeout
+  } catch (e: any) {
+    console.error('[USER DATA STREAM] Failed to start:', e.message)
+    console.log('[ORDER POLL] Falling back to polling open orders every 60s to detect fills...')
+    startOrderPolling()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Order Polling Fallback — for when User Data Stream is geo-blocked
+// Polls Binance every ~60s to check if any pending grid sell orders were filled
+// ---------------------------------------------------------------------------
+const startOrderPolling = (): void => {
+  console.log('[ORDER POLL] Starting order poll fallback (60s interval)')
+
+  setInterval(async () => {
+    // Collect all symbols that have pending grid levels with order IDs
+    const symbolsToCheck = Object.keys(gridLevels).filter(
+      (sym) => gridLevels[sym]?.some((l) => l.binanceSellOrderId)
+    )
+    if (symbolsToCheck.length === 0) return
+
+    for (const symbol of symbolsToCheck) {
+      try {
+        const openOrdersRes = await client.openOrders(symbol) as any
+        const openOrders: any[] = openOrdersRes.data || []
+        const openOrderIds = new Set(openOrders.map((o: any) => o.orderId?.toString()))
+
+        const levels = gridLevels[symbol] || []
+        for (const level of [...levels]) {
+          if (!level.binanceSellOrderId) continue
+          if (!openOrderIds.has(level.binanceSellOrderId)) {
+            // Order no longer open — assume it was filled at the sell price
+            console.log(`[ORDER POLL] Grid sell likely filled for ${symbol} — order ${level.binanceSellOrderId}`)
+            handleGridSellFill(symbol, level, level.sellPrice).catch(console.error)
+          }
+        }
+      } catch {
+        // Silently skip — network issues shouldn't spam the log
+      }
+    }
+  }, 60_000)
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket — Market Price Feed
+// ---------------------------------------------------------------------------
+const connectWebSocket = (): void => {
   streamGeneration += 1
   const currentGen = streamGeneration
 
-  const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-  const monitoringSet = new Set([...whitelistSymbols, ...Object.keys(activePositions), 'BTCUSDT'])
-  const monitoringList = Array.from(monitoringSet)
-  console.log(`[GEN ${currentGen}] Connecting WebSockets for ${monitoringList.length} pairs...`)
-
-  // Notify UI of exactly what we are monitoring
+  // Monitor all whitelisted symbols + any with active grid states
+  const monitoringSet = new Set([
+    ...currentWhitelist,
+    ...Object.keys(gridState)
+  ])
+  const monitoringList = Array.from(monitoringSet).filter(Boolean)
+  console.log(`[GEN ${currentGen}] Connecting WebSocket for ${monitoringList.length} symbols: ${monitoringList.join(', ')}`)
   botEvents.emit('monitoring_update', monitoringList)
 
   if (monitoringList.length === 0) return
 
-  // @binance/connector websocket structure
   const callbacks = {
-    open: () => console.log(`[GEN ${currentGen}] Connected to Binance WebSocket`),
-    close: () => console.log(`[GEN ${currentGen}] Binance WebSocket Closed`),
-    error: (err) => console.error(`[GEN ${currentGen}] Binance WebSocket Error:`, err),
-    message: (data) => {
+    open: () => console.log(`[GEN ${currentGen}] WebSocket connected.`),
+    close: () => console.log(`[GEN ${currentGen}] WebSocket closed.`),
+    error: (err: any) => console.error(`[GEN ${currentGen}] WebSocket error:`, err),
+    message: (data: string) => {
+      if (streamGeneration !== currentGen) return
       try {
         const combined = JSON.parse(data)
-        // Combined stream: { "stream":"<streamName>", "data":<event> }
-        // Individual stream: <event>
-        const parsed = combined.data ? combined.data : combined
-
-        if (parsed.e === 'aggTrade') {
+        const parsed = combined.data ?? combined
+        if (parsed.e === 'aggTrade' || parsed.e === 'trade') {
           const symbol = parsed.s
           const price = parseFloat(parsed.p)
-          const volume = parseFloat(parsed.q)
-          const tradeId = parsed.a
-          const timestamp = parsed.T
-          processTick(symbol, price, volume, currentGen, tradeId, timestamp).catch((e) =>
-            console.error(e)
-          )
+          if (!isNaN(price)) processTick(symbol, price)
         }
-        // BookTicker (spot) doesn't always have 'e': 'bookTicker'
-        else if (
-          parsed.e === 'bookTicker' ||
-          (parsed.s && parsed.B !== undefined && parsed.A !== undefined)
-        ) {
-          const symbol = parsed.s
-          const bidQty = parseFloat(parsed.B)
-          const askQty = parseFloat(parsed.A)
-          regimeFilter.updateOrderBook(symbol, bidQty, askQty)
-        }
-      } catch (e: any) {}
+      } catch { /* ignore */ }
     }
   }
-
-  // Subscribing to aggregate trades AND book tickers for all symbols
-  const streams: string[] = []
-  monitoringList.forEach((sym) => {
-    if (sym && typeof sym === 'string') {
-      streams.push(`${sym.toLowerCase()}@aggTrade`)
-      streams.push(`${sym.toLowerCase()}@bookTicker`)
-    }
-  })
 
   wsClient = new WebsocketStream({ callbacks })
-
-  // Stream one by one
-  streams.forEach((stream) => {
-    wsClient.subscribe(stream)
-  })
+  const streams = monitoringList.map((sym) => `${sym.toLowerCase()}@aggTrade`)
+  streams.forEach((stream) => wsClient.subscribe(stream))
 }
 
 // ---------------------------------------------------------------------------
-// 60-Second Entry Evaluation Loop
-// Mirrors backtest LIVE_TICKS behavior: all real ticks are fed into RegimeFilter
-// on every aggTrade (in processTick), but signal evaluation happens once per
-// 60-second boundary — exactly like the backtest. This prevents noisy intra-minute
-// aggTrades from resetting the confirmation counter before the MAs can absorb them.
+// Reload Whitelist / Reconnect
 // ---------------------------------------------------------------------------
-let entryEvalRunning = false
-let isBotRunning = false
-let botIntervals: NodeJS.Timeout[] = [] // Guard against overlapping async runs
-
-const evaluateEntries = async () => {
-  if (entryEvalRunning) return // Skip if previous run hasn't finished
-  entryEvalRunning = true
-  try {
-    const now = Date.now()
-    const maxConcurrent = parseInt(currentSettings.max_concurrent_trades || '3')
-
-    for (const item of currentWhitelist) {
-      const symbol = typeof item === 'string' ? item : item.symbol
-
-      if (symbol.startsWith('BNB')) continue
-      if (activePositions[symbol]) {
-        // Already holding — clear any stale signal state
-        if (consecutiveBullSignals[symbol]) delete consecutiveBullSignals[symbol]
-        continue
-      }
-      if (manualModes[symbol]) continue
-
-      const strategyName = coinStrategies[symbol] || currentSettings.active_strategy || 'SNIPER'
-      const baseConfig = STRATEGIES[strategyName]
-
-      // Cooldown guard
-      const cooldownMs = baseConfig.COOLDOWN_MS || COOLDOWN_PERIOD
-      if (cooldowns[symbol] && now - cooldowns[symbol] < cooldownMs) {
-        if (consecutiveBullSignals[symbol]) delete consecutiveBullSignals[symbol]
-        continue
-      }
-
-      // Snapshot the current state of the RegimeFilter (same as backtest end-of-window sample)
-      const symbolHistory = regimeFilter.getHistory(symbol)
-      if (!symbolHistory || symbolHistory.length === 0) continue
-
-      const lastPrice = symbolHistory[symbolHistory.length - 1].price
-      const scaledConfig = getScaledConfig(symbolHistory, baseConfig)
-      const rsi5m = calculateRSI(symbolHistory, 14, 300)
-      const {
-        micro: regime,
-        macro: macroRegime,
-        isBouncing,
-        zScore,
-        autocorrelation,
-        obi
-      } = regimeFilter.getRegime(symbol, baseConfig)
-      const btcData = regimeFilter.getRegime('BTCUSDT', baseConfig)
-      const btcRegime = btcData.micro
-      const btcMacroDiff = btcData.macroDiff || 0
-      const isDecoupled = currentDecoupledList.includes(symbol)
-      const boxBounds = dailyBoxBounds[symbol] || null
-
-      const entryCheck = shouldEnter(
-        symbol,
-        regime,
-        false,
-        btcRegime,
-        currentWhitelist,
-        symbolHistory,
-        lastPrice,
-        btcMacroDiff,
-        scaledConfig,
-        macroRegime,
-        isDecoupled,
-        false,
-        rsi5m,
-        boxBounds,
-        zScore,
-        autocorrelation,
-        obi
-      )
-
-      if (entryCheck === true) {
-        const state = consecutiveBullSignals[symbol] || { count: 0 }
-        state.count += 1
-        consecutiveBullSignals[symbol] = state
-
-        // 2 consecutive 60-second windows of BULL = buy (matches backtest signalsRequired)
-        const signalsRequired = 2
-        console.log(
-          `[SIGNAL] ${symbol} ${regime}/${macroRegime} (${state.count}/${signalsRequired}). RSI: ${rsi5m !== null ? Math.round(rsi5m) : 'n/a'}. Bounce: ${isBouncing}`
-        )
-
-        if (state.count >= signalsRequired) {
-          if (Object.keys(activePositions).length >= maxConcurrent) {
-            console.log(
-              `[SKIP BUY] ${symbol}: Already at max ${maxConcurrent} concurrent positions.`
-            )
-            delete consecutiveBullSignals[symbol]
-            continue
-          }
-          const entryLabel = isBouncing
-            ? 'BOUNCE ENTRY'
-            : regime === 'RECOVERY'
-              ? 'DIP BUY ENTRY'
-              : 'ENTRY SIGNAL'
-          console.log(
-            `[${entryLabel}] Buying ${symbol} after ${state.count} consecutive 60s ${regime} windows. Bounce: ${isBouncing}`
-          )
-          await executeTrade(symbol, 'BUY', lastPrice, entryLabel)
-          delete consecutiveBullSignals[symbol]
-        }
-      } else {
-        // Log block reason and reset counter — same as backtest consecutive reset on non-BULL window
-        if (entryCheck && entryCheck.allowed === false) {
-          const reason = entryCheck.reason
-          const advice = entryCheck.advice
-
-          if (advice === 'MOON_POTENTIAL') {
-            console.log(
-              `[ADVISORY - MOON POTENTIAL] ${symbol} blocked by ${reason} but showing extreme momentum. Manual entry worthy?`
-            )
-          } else if (reason.startsWith('BTC_TOO_WEAK')) {
-            console.log(`[BLOCKED - BTC WEAK] ${symbol}: ${reason}`)
-          } else if (reason.startsWith('RSI_TOO_HIGH')) {
-            console.log(`[BLOCKED - RSI] ${symbol}: ${reason}`)
-          } else {
-            console.log(`[BLOCKED] ${symbol}: ${reason}`)
-          }
-        }
-        if (consecutiveBullSignals[symbol]) delete consecutiveBullSignals[symbol]
-      }
-    }
-  } finally {
-    entryEvalRunning = false
-  }
-}
-
-const startBot = async function startBot() {
-  if (isBotRunning) {
-    console.log('[BOT] Already running. Skipping initialization.')
-    return
-  }
-  isBotRunning = true
-  botStartTime = Date.now()
-  await initDb()
-  const whitelist = await getWhitelist()
-  currentWhitelist = whitelist // Array of {symbol, strategy}
-  coinStrategies = {}
-  whitelist.forEach((i) => {
-    if (i.strategy) {
-      coinStrategies[i.symbol] = i.strategy
-      console.log(`[INIT] Per-Coin Strategy: ${i.symbol} -> ${i.strategy}`)
-    }
-  })
-
-  // Load Settings
-  const settings = await getSettings()
-  Object.assign(currentSettings, settings)
-  currentMode = currentSettings.trading_mode || 'SIMULATION'
-
-  // Load persisted positions for current mode
-  await loadPositionsForMode()
-  await updateFilters() // Initial filters fetch
-
-  const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-  console.log(`Starting bot with whitelist: ${whitelistSymbols.join(', ')}`)
-  console.log(
-    `Mode: ${currentMode}, Capital: ${currentSettings.capital_value} ${currentSettings.capital_type}`
-  )
-
-  // Historical Backfill to warm up indicators
-  const monitoringSet = new Set([...whitelistSymbols, ...Object.keys(activePositions), 'BTCUSDT'])
-  await backfillHistory(Array.from(monitoringSet))
-
-  connectWebSocket()
-  await refreshBoxBounds()
-  startTickRecording() // Begin buffered tick recording to DB
-
-  // Clear any existing intervals (paranoia check)
-  botIntervals.forEach(clearInterval)
-  botIntervals = []
-
-  // 60-second entry evaluation loop — mirrors backtest LIVE_TICKS signal timing
-  evaluateEntries() // Run immediately after warmup
-  botIntervals.push(setInterval(evaluateEntries, 60 * 1000))
-
-  // 30-second DB sync to support multi-instance / web bot coexistence
-  botIntervals.push(setInterval(syncWithDatabase, 30 * 1000))
-
-  // Refresh daily bounds every hour
-  botIntervals.push(setInterval(refreshBoxBounds, 60 * 60 * 1000))
-
-  // Fetch initial balances and start refresh cycle
-  fetchBalances()
-  botIntervals.push(setInterval(fetchBalances, 30 * 1000)) // Update every 30s
-
-  // WebSocket Watchdog: If no ticks received for 1 minute, reconnect
-  botIntervals.push(
-    setInterval(() => {
-      const now = Date.now()
-      const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-      const monitoringList = Array.from(
-        new Set([...whitelistSymbols, ...Object.keys(activePositions), 'BTCUSDT'])
-      )
-
-      let deadDetected = false
-      for (const symbol of monitoringList) {
-        const lastTick = lastTicks[symbol]
-        if (!lastTick) continue // Not started yet
-
-        const inactiveTime = now - lastTick
-        if (inactiveTime > 90000) {
-          // 90 seconds (allow some buffer for low volume)
-          console.warn(
-            `[WATCHDOG] Stream dead for ${symbol} (${Math.floor(inactiveTime / 1000)}s). Attempting full reconnection...`
-          )
-          deadDetected = true
-          break
-        }
-      }
-
-      if (deadDetected) {
-        // Reset all to prevent reconnection loop if internet is completely down
-        monitoringList.forEach((s) => (lastTicks[s] = now))
-        reloadWhitelist(currentWhitelist).catch((e) =>
-          console.error('[WATCHDOG] Reconnect fail:', e)
-        )
-      }
-
-      // Market Pulse: Every minute, log a summary of what the bot is seeing
-      const globalStrategyConfig = STRATEGIES[currentSettings.active_strategy || 'SNIPER']
-      const btcRegime = regimeFilter.getRegime('BTCUSDT', globalStrategyConfig)
-      const summary = currentWhitelist
-        .map((item) => {
-          const symbol = item.symbol
-          const strategyName = coinStrategies[symbol] || currentSettings.active_strategy || 'SNIPER'
-          const strategyConfig = STRATEGIES[strategyName]
-          const { micro, macro } = regimeFilter.getRegime(symbol, strategyConfig)
-          const history = (regimeFilter as any).data[symbol]
-
-          // Latency indicator
-          const lastTick = lastTicks[symbol]
-          const latency = lastTick ? Math.round((now - lastTick) / 1000) : '?'
-          const latencyStr = typeof latency === 'number' && latency > 5 ? ` ⏰${latency}s` : ''
-
-          let diff = '0.00%'
-          if (history && history.length >= 60) {
-            const sMA = history.slice(-60).reduce((sum, t) => sum + t.price, 0) / 60
-            const lMA =
-              history.slice(-900).reduce((sum, t) => sum + t.price, 0) /
-              Math.min(history.length, 900)
-            diff = (((sMA - lMA) / lMA) * 100).toFixed(2) + '%'
-          }
-          return `${symbol.replace('USDT', '')}: ${micro}/${macro} (${diff}${latencyStr})`
-        })
-        .join(' | ')
-      const activeCount = Object.keys(activePositions).length
-      console.log(
-        `[MARKET PULSE] BTC: ${btcRegime.micro}/${btcRegime.macro} | ${summary} | Active: ${activeCount}`
-      )
-    }, 60000)
-  ) // Check every minute
-}
-
-const fetchBalances = async () => {
-  if (!apiKey || !apiSecret) return
-  try {
-    const response = await client.account()
-    const usdt = response.data.balances.find((b) => b.asset === 'USDT')
-    const bnb = response.data.balances.find((b) => b.asset === 'BNB')
-    balances.USDT = parseFloat(usdt ? usdt.free : 0)
-    balances.BNB = parseFloat(bnb ? bnb.free : 0)
-    botEvents.emit('balance_update', balances)
-
-    // Staking Reward Sync: Check actual exchange balances for active positions
-    if (currentMode === 'LIVE') {
-      for (const symbol in activePositions) {
-        const asset = symbol.replace('USDT', '')
-        const balanceItem = response.data.balances.find((b) => b.asset === asset)
-        const actualQty = parseFloat(balanceItem ? balanceItem.free : 0)
-        const recordedQty = activePositions[symbol].quantity
-
-        // If exchange balance is higher than our records, treat as staking reward (bought at 0)
-        if (actualQty > recordedQty + 0.000001) {
-          const oldEntry = activePositions[symbol].entryPrice
-          // Math: Total Cost (oldEntry * recordedQty) / New Total Qty
-          const newEntry = (oldEntry * recordedQty) / actualQty
-
-          console.log(
-            `[STAKING SYNC] ${symbol}: Rewarded ${(actualQty - recordedQty).toFixed(6)} coins. New Entry: $${newEntry.toFixed(6)} (was $${oldEntry.toFixed(6)})`
-          )
-
-          activePositions[symbol].quantity = actualQty
-          activePositions[symbol].entryPrice = newEntry
-          await savePosition(symbol, activePositions[symbol], currentMode)
-        }
-      }
-    }
-  } catch (e: any) {
-    console.error('Error fetching balances:', e)
-  }
-}
-
-const reloadDecoupledList = async () => {
-  currentDecoupledList = await getDecoupledWhitelist()
-  console.log('[DECOUPLED] Updated decoupled list:', currentDecoupledList)
-}
-
-const reloadWhitelist = async (newWhitelistItems) => {
-  currentWhitelist = newWhitelistItems
-  coinStrategies = {}
-  newWhitelistItems.forEach((i) => {
-    if (i.strategy) {
-      coinStrategies[i.symbol] = i.strategy
-    }
-    // Reset confirmation counts for any symbol in the whitelist to give
-    // the potentially new strategy a fresh start.
-    delete consecutiveBullSignals[i.symbol]
-  })
-  const whitelistSymbols = currentWhitelist.map((i) => (typeof i === 'string' ? i : i.symbol))
-  console.log(`Whitelist reloaded: ${whitelistSymbols.join(', ')} (Signals reset)`)
+const reloadWhitelist = async (newSymbols: string[]): Promise<void> => {
+  currentWhitelist = newSymbols.map((s) => (typeof s === 'object' ? (s as any).symbol : s))
+  console.log(`[WHITELIST] Reloaded: ${currentWhitelist.join(', ')}`)
 
   if (wsClient) {
-    console.log(`Stopping generation ${streamGeneration} to prevent ghost ticks.`)
     try {
       if (typeof wsClient.disconnect === 'function') wsClient.disconnect()
-      // Forceful cleanup of underlying socket if available
       if (wsClient.ws) wsClient.ws.terminate()
-    } catch (e: any) {
-      console.error('Error closing old stream:', e)
-    }
+    } catch { /* ignore */ }
   }
-  await updateFilters() // Refresh stepSize filters
-  await refreshBoxBounds() // Ensure bounds for any new whitelist additions
+
+  await updateFilters()
   connectWebSocket()
 }
 
-const loadPositionsForMode = async () => {
-  activePositions = {} // Clear memory
-  const loadedPositions = await getActivePositions(currentMode)
-  Object.assign(activePositions, loadedPositions)
-
-  // Sync manual modes state from loaded positions
-  for (const symbol in loadedPositions) {
-    if (loadedPositions[symbol].isManual) {
-      manualModes[symbol] = true
-    } else {
-      delete manualModes[symbol]
-    }
-  }
-
-  if (Object.keys(activePositions).length > 0) {
-    console.log(
-      `Loaded ${Object.keys(activePositions).length} active ${currentMode} positions. Manual modes: ${Object.keys(manualModes).length}`
-    )
-  }
-}
-
-const syncWithDatabase = async () => {
-  try {
-    const loadedPositions = await getActivePositions(currentMode)
-    let changed = false
-
-    // Add or update positions
-    for (const symbol in loadedPositions) {
-      if (!activePositions[symbol]) {
-        activePositions[symbol] = loadedPositions[symbol]
-        console.log(`[SYNC] New position detected from DB: ${symbol}`)
-        changed = true
-      } else {
-        activePositions[symbol].quantity = loadedPositions[symbol].quantity
-        activePositions[symbol].entryPrice = loadedPositions[symbol].entryPrice
-        activePositions[symbol].highWaterMark = Math.max(
-          activePositions[symbol].highWaterMark,
-          loadedPositions[symbol].highWaterMark
-        )
-        activePositions[symbol].isManual = loadedPositions[symbol].isManual
-      }
-
-      // Sync manual modes
-      if (loadedPositions[symbol].isManual) {
-        manualModes[symbol] = true
-      } else {
-        delete manualModes[symbol]
-      }
-    }
-
-    // Remove closed positions
-    for (const symbol in activePositions) {
-      if (!loadedPositions[symbol]) {
-        console.log(`[SYNC] Position ${symbol} closed elsewhere. Removing locally.`)
-        delete activePositions[symbol]
-        changed = true
-      }
-    }
-
-    if (changed) refreshStreams()
-
-    // Sync core settings
-    const settings = (await getSettings()) as Record<string, string>
-    if (settings.max_concurrent_trades)
-      currentSettings.max_concurrent_trades = settings.max_concurrent_trades
-    if (settings.active_strategy) currentSettings.active_strategy = settings.active_strategy
-  } catch (e: any) {
-    console.error('[SYNC ERROR]:', e)
-  }
-}
-
-const updateSettingsLocally = async (newSettings) => {
+// ---------------------------------------------------------------------------
+// Settings Update
+// ---------------------------------------------------------------------------
+const updateSettingsLocally = (newSettings: Record<string, string>): void => {
   const oldMode = currentMode
-  const oldStrategy = currentSettings.active_strategy
   Object.assign(currentSettings, newSettings)
-  currentMode = currentSettings.trading_mode || 'SIMULATION'
-
-  if (oldMode !== currentMode || oldStrategy !== currentSettings.active_strategy) {
-    console.log(`Switching state: Mode ${currentMode}, Strategy ${currentSettings.active_strategy}`)
-    consecutiveBullSignals = {} // reset signals on switch
-    cooldowns = {}
-  }
+  currentMode = currentSettings.trading_mode || 'LIVE'
 
   if (oldMode !== currentMode) {
-    await loadPositionsForMode()
-    await refreshBoxBounds()
-    refreshStreams() // Update subscriptions based on new active positions
+    console.log(`[BOT] Trading mode switched to: ${currentMode}`)
+    // Reload grid state for new mode
+    loadBotState()
   }
 }
 
-const executeManualTrade = async (symbol, side) => {
-  if (side === 'SELL' && !activePositions[symbol]) {
-    throw new Error(`Cannot manually sell ${symbol}: No active position.`)
-  }
-  // Removed restriction on Manual Buy if position exists to allow for Manual DCA / Cost Averaging
+// ---------------------------------------------------------------------------
+// Load Persisted State
+// ---------------------------------------------------------------------------
+const loadBotState = (): void => {
+  // Load grid states for current mode
+  const savedStates = getGridState(currentMode)
+  Object.assign(gridState, savedStates)
 
-  // Get last price
-  const history = (regimeFilter as any).data[symbol]
-  const price = history && history.length > 0 ? history[history.length - 1].price : null
-  if (!price) {
-    throw new Error(`Cannot execute manual trade for ${symbol}: No price data available.`)
+  // Clear any states from a different mode
+  for (const sym of Object.keys(gridState)) {
+    if (!savedStates[sym]) delete gridState[sym]
   }
 
-  console.log(`[MANUAL OVERRIDE] Executing ${side} on ${symbol} at ~${price}`)
-  await executeTrade(symbol, side, price, 'MANUAL')
-  return true
+  // Load active grid levels
+  const allLevels = getAllActiveGridLevels(currentMode)
+  for (const sym of Object.keys(gridLevels)) gridLevels[sym] = []
+  allLevels.forEach((row: any) => {
+    if (!gridLevels[row.symbol]) gridLevels[row.symbol] = []
+    gridLevels[row.symbol].push({
+      id: row.id,
+      symbol: row.symbol,
+      mode: row.mode,
+      buyPrice: row.buy_price,
+      sellPrice: row.sell_price,
+      quantity: row.quantity,
+      cost: row.cost,
+      status: 'PENDING_SELL',
+      binanceSellOrderId: row.binance_sell_order_id
+    })
+  })
+
+  console.log(
+    `[BOT] Loaded ${Object.keys(gridState).length} base shares and ${allLevels.length} grid levels for ${currentMode} mode.`
+  )
 }
 
-const toggleBotManualMode = async (symbol, enable) => {
-  if (enable) {
-    manualModes[symbol] = true
-  } else {
-    delete manualModes[symbol]
-  }
-
-  // Persist to DB if there's an active position
-  if (activePositions[symbol]) {
-    activePositions[symbol].isManual = !!enable
-    await updatePositionManualMode(symbol, !!enable, currentMode)
-  }
-
-  console.log(`[MANUAL MODE] ${symbol} set to ${enable}`)
-  refreshStreams()
-}
-
-const getUnrealizedPnl = () => {
+// ---------------------------------------------------------------------------
+// Unrealized PnL (for stats)
+// ---------------------------------------------------------------------------
+export const getUnrealizedPnl = (): number => {
   let total = 0
-  for (const symbol in activePositions) {
-    const pos = activePositions[symbol]
-    const history = (regimeFilter as any).data[symbol]
-    const currentPrice =
-      history && history.length > 0 ? history[history.length - 1].price : pos.entryPrice
-    total += (currentPrice - pos.entryPrice) * pos.quantity
+  for (const symbol of Object.keys(gridState)) {
+    const state = gridState[symbol]
+    const price = lastPrices[symbol] || state.basePrice
+    total += (price - state.basePrice) * state.baseQuantity
+    const levels = gridLevels[symbol] || []
+    for (const level of levels) {
+      total += (price - level.buyPrice) * level.quantity
+    }
   }
   return total
 }
 
-export const getLivePositions = () => activePositions
-export const getCurrentMode = () => currentMode
+// ---------------------------------------------------------------------------
+// Get Grid State (for IPC)
+// ---------------------------------------------------------------------------
+export const getFullGridState = (): Record<string, any> => {
+  const result: Record<string, any> = {}
+  for (const symbol of [...currentWhitelist, ...Object.keys(gridState)]) {
+    const state = gridState[symbol]
+    const levels = gridLevels[symbol] || []
+    const price = lastPrices[symbol] || 0
+    result[symbol] = {
+      symbol,
+      hasBaseShare: !!state,
+      basePrice: state?.basePrice,
+      baseQuantity: state?.baseQuantity,
+      baseEntryCost: state?.baseEntryCost,
+      currentPrice: price,
+      pctFromBase: state ? ((price - state.basePrice) / state.basePrice) * 100 : null,
+      gridLevels: levels,
+      totalUnrealizedPnl: state
+        ? (price - state.basePrice) * state.baseQuantity +
+          levels.reduce((s, l) => s + (price - l.buyPrice) * l.quantity, 0)
+        : 0
+    }
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Legacy compatibility exports
+// ---------------------------------------------------------------------------
+export const executeManualTrade = async (symbol: string, side: 'BUY' | 'SELL'): Promise<boolean> => {
+  if (side === 'SELL') {
+    await sellBaseShare(symbol)
+    return true
+  }
+  // Manual BUY: register as base share using last known price
+  const price = lastPrices[symbol]
+  if (!price) throw new Error(`No price data available for ${symbol}`)
+  const qty = getShareAmount() / price
+  await registerBaseShare(symbol, price, qty)
+  return true
+}
+
+export const getCurrentMode = (): string => currentMode
+
+// Forward-compatible no-ops for removed features
+export const reloadDecoupledList = async (): Promise<void> => { /* no-op */ }
+export const toggleBotManualMode = async (): Promise<boolean> => true
+
+// ---------------------------------------------------------------------------
+// Start Bot
+// ---------------------------------------------------------------------------
+export const startBot = async (): Promise<void> => {
+  if (isBotRunning) {
+    console.log('[BOT] Already running.')
+    return
+  }
+  isBotRunning = true
+  botStartTime = Date.now()
+
+  await initDb()
+
+  const settings = getSettings()
+  Object.assign(currentSettings, settings)
+  currentMode = currentSettings.trading_mode || 'LIVE'
+
+  currentWhitelist = getWhitelist()
+  console.log(`[BOT] Whitelist: ${currentWhitelist.join(', ')}`)
+  console.log(`[BOT] Mode: ${currentMode}, Share: $${getShareAmount()}, Grid Step: ${getGridStep()}%`)
+
+  loadBotState()
+
+  await updateFilters()
+  await fetchBalances()
+
+  connectWebSocket()
+
+  // Start User Data Stream for live order fill detection
+  if (currentMode === 'LIVE' && apiKey) {
+    await startUserDataStream()
+  }
+
+  botIntervals.forEach(clearInterval)
+  botIntervals = []
+
+  // Refresh balances every 30 seconds
+  botIntervals.push(setInterval(fetchBalances, 30 * 1000))
+
+  // Periodic filter refresh (every hour)
+  botIntervals.push(setInterval(updateFilters, 60 * 60 * 1000))
+
+  // Market pulse log every minute
+  botIntervals.push(setInterval(() => {
+    const symbolList = [...new Set([...currentWhitelist, ...Object.keys(gridState)])]
+    const summary = symbolList.map((sym) => {
+      const price = lastPrices[sym]
+      const state = gridState[sym]
+      const levels = (gridLevels[sym] || []).length
+      if (!price) return `${sym.replace('USDT', '')}: no data`
+      const pct = state ? (((price - state.basePrice) / state.basePrice) * 100).toFixed(2) + '%' : 'no base'
+      return `${sym.replace('USDT', '')}: $${price.toFixed(4)} (${pct}) [${levels} levels]`
+    }).join(' | ')
+    console.log(`[MARKET PULSE] ${summary}`)
+  }, 60_000))
+
+  console.log('[BOT] Grid DCA Bot started.')
+}
+
+// Named exports for IPC compatibility
 export {
-  startBot,
   reloadWhitelist,
-  botEvents,
-  balances,
-  updateSettingsLocally,
-  executeManualTrade,
-  toggleBotManualMode,
-  reloadDecoupledList,
-  getUnrealizedPnl
+  registerBaseShare,
+  sellBaseShare,
+  clearGridLevels,
+  updateSettingsLocally
 }
