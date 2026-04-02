@@ -367,6 +367,7 @@ export {
   logTrade,
   getRecentTrades,
   clearTradeHistory,
+  wipeAllData,
   getMetrics,
   getGridState,
   saveGridState,

@@ -607,7 +607,15 @@ export const wipeAllDataLocally = (): void => {
   for (const symbol in gridState) {
     delete gridState[symbol]
   }
-  console.log(`[BOT] All grid state cleared from memory.`)
+  for (const symbol in gridLevels) {
+    gridLevels[symbol] = []
+  }
+  console.log(`[BOT] All grid state and grid levels cleared from memory.`)
+  // Notify UI
+  const allSymbols = new Set([...Object.keys(lastPrices), ...Object.keys(gridState)])
+  allSymbols.forEach((symbol) => {
+    broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
+  })
 }
 
 // ---------------------------------------------------------------------------

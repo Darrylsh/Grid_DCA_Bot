@@ -51,6 +51,8 @@ import {
   registerBaseShare,
   sellBaseShare,
   clearGridLevels,
+  deleteBaseShareLocally,
+  wipeAllDataLocally,
   getFullGridState
 } from './bot'
 
@@ -61,7 +63,9 @@ import {
   updateSetting,
   getMetrics,
   getRecentTrades,
-  clearTradeHistory
+  clearTradeHistory,
+  deleteGridState,
+  wipeAllData
 } from './db'
 
 import { runBacktest } from './backtest'
@@ -174,8 +178,6 @@ app.whenReady().then(async () => {
   })
   handleIPC('bot:getGridState', async () => getFullGridState())
   handleIPC('bot:deleteBaseShare', async (_, symbol: string) => {
-    const { deleteGridState } = await import('./db')
-    const { deleteBaseShareLocally } = await import('./bot')
     deleteGridState(symbol, getCurrentMode())
     deleteBaseShareLocally(symbol)
     return true
@@ -229,8 +231,6 @@ app.whenReady().then(async () => {
   )
   handleIPC('bot:clearTradeHistory', async (_, mode: string) => clearTradeHistory(mode))
   handleIPC('bot:wipeAllData', async (_, mode: string) => {
-    const { wipeAllData } = await import('./db')
-    const { wipeAllDataLocally } = await import('./bot')
     wipeAllData(mode)
     wipeAllDataLocally()
     return true
