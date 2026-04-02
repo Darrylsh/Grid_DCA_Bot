@@ -11,6 +11,9 @@ import { EventEmitter } from 'events'
 import {
   initDb,
   getWhitelist,
+  getRecentTrades,
+  clearTradeHistory,
+  wipeAllData,
   getSettings,
   logTrade,
   saveGridState,
@@ -598,6 +601,13 @@ export const deleteBaseShareLocally = (symbol: string): void => {
   delete gridState[symbol]
   console.log(`[BASE SHARE] ${symbol}: Local record deleted.`)
   broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
+}
+
+export const wipeAllDataLocally = (): void => {
+  for (const symbol in gridState) {
+    delete gridState[symbol]
+  }
+  console.log(`[BOT] All grid state cleared from memory.`)
 }
 
 // ---------------------------------------------------------------------------

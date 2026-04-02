@@ -246,6 +246,21 @@ export default function App() {
     }
   }
 
+  const handleWipeAllData = async () => {
+    if (
+      window.confirm(
+        `WIPE ALL DATA for ${tradingMode}? This will delete all base shares, grid levels, and trade history. This cannot be undone.`
+      )
+    ) {
+      await window.api.wipeAllData(tradingMode)
+      setToast({ message: `Full data wipe completed for ${tradingMode}`, type: 'success' })
+      // Refresh all state
+      window.api.getGridState().then(setMarketData)
+      window.api.getStats().then(setStats)
+      window.api.getRecentTrades({ mode: tradingMode, limit: 50 }).then(setLogs)
+    }
+  }
+
   const handleDeleteBaseShare = async (symbol: string) => {
     if (window.confirm(`Delete local record for ${stripUSDT(symbol)}? This will NOT sell your coins on Binance, it only clears the bot's tracking state.`)) {
       await window.api.deleteBaseShare(symbol)
@@ -774,14 +789,32 @@ export default function App() {
               {/* Danger Zone */}
               <div className="mt-12 pt-8 border-t border-slate-800/60">
                 <h3 className="text-sm font-bold text-rose-400 uppercase tracking-widest mb-4">Danger Zone</h3>
-                <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-6 flex items-center justify-between shadow-xl shadow-rose-950/20">
-                  <div>
-                    <h4 className="font-bold text-rose-100 mb-1">Reset {tradingMode} Trade History</h4>
-                    <p className="text-xs text-slate-500">Permanently delete all trade logs and reset profit metrics.</p>
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-700/50 rounded-2xl">
+                    <div>
+                      <h4 className="text-white font-bold mb-1">Reset {tradingMode} Trade History</h4>
+                      <p className="text-slate-400 text-xs">Permanently delete all trade logs and reset profit metrics.</p>
+                    </div>
+                    <button
+                      onClick={handleResetStats}
+                      className="bg-rose-600/20 hover:bg-rose-600 border border-rose-600/30 text-rose-400 hover:text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all"
+                    >
+                      Reset History
+                    </button>
                   </div>
-                  <button onClick={handleResetStats} className="bg-rose-600/20 hover:bg-rose-600 border border-rose-600/30 text-rose-400 hover:text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all">
-                    RESET STATS
-                  </button>
+
+                  <div className="flex items-center justify-between p-4 bg-rose-950/20 border border-rose-500/20 rounded-2xl">
+                    <div>
+                      <h4 className="text-rose-400 font-bold mb-1">Full Data Wipe ({tradingMode})</h4>
+                      <p className="text-slate-400 text-xs">Delete EVERYTHING: Base shares, grid levels, and history.</p>
+                    </div>
+                    <button
+                      onClick={handleWipeAllData}
+                      className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-900/20"
+                    >
+                      Wipe All Data
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

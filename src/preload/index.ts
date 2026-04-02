@@ -47,6 +47,7 @@ const api = {
   getRecentTrades: (args: { mode: string; limit: number }) =>
     ipcRenderer.invoke('bot:getRecentTrades', args),
   clearTradeHistory: (mode: string) => ipcRenderer.invoke('bot:clearTradeHistory', mode),
+  wipeAllData: (mode: string) => ipcRenderer.invoke('bot:wipeAllData', mode),
 
   // ---- Backtest ----
   runBacktest: (

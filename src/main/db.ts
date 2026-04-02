@@ -196,6 +196,14 @@ const clearTradeHistory = (mode = 'LIVE'): boolean => {
   return true
 }
 
+const wipeAllData = (mode = 'LIVE'): boolean => {
+  const database = getDb()
+  database.prepare('DELETE FROM trades WHERE mode = ?').run(mode)
+  database.prepare('DELETE FROM grid_state WHERE mode = ?').run(mode)
+  database.prepare('DELETE FROM grid_levels WHERE mode = ?').run(mode)
+  return true
+}
+
 const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate: number; totalTrades: number } => {
   const row = getDb()
     .prepare(

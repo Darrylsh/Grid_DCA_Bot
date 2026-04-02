@@ -228,6 +228,13 @@ app.whenReady().then(async () => {
     getRecentTrades(mode, limit)
   )
   handleIPC('bot:clearTradeHistory', async (_, mode: string) => clearTradeHistory(mode))
+  handleIPC('bot:wipeAllData', async (_, mode: string) => {
+    const { wipeAllData } = await import('./db')
+    const { wipeAllDataLocally } = await import('./bot')
+    wipeAllData(mode)
+    wipeAllDataLocally()
+    return true
+  })
 
   // ---- Legacy no-op handlers (kept for smooth transition) ----
   handleIPC('bot:getDecoupledWhitelist', async () => [])
