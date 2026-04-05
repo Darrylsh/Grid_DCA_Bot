@@ -19,6 +19,9 @@ export interface SymbolGridState {
   pctFromBase?: number
   gridLevels: GridLevel[]
   totalUnrealizedPnl: number
+  trailActive?: boolean
+  trailHigh?: number
+  trailStopPrice?: number
 }
 
 export interface IElectronAPI {
@@ -51,6 +54,7 @@ export interface IElectronAPI {
   // Stats
   getStats: () => Promise<{
     totalPnl: number
+    totalFees: number
     avgRoi: number
     winRate: number
     fillRate: number

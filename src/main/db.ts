@@ -32,7 +32,7 @@ const initDb = async (): Promise<void> => {
       side TEXT NOT NULL,
       price REAL NOT NULL,
       quantity REAL NOT NULL,
-      timestamp TEXT DEFAULT (datetime('now')),
+      timestamp INTEGER DEFAULT (strftime('%s', 'now') * 1000),
       pnl REAL DEFAULT 0,
       roi REAL DEFAULT 0,
       mode TEXT DEFAULT 'LIVE',
@@ -42,7 +42,7 @@ const initDb = async (): Promise<void> => {
     CREATE TABLE IF NOT EXISTS whitelist (
       symbol TEXT PRIMARY KEY,
       active INTEGER DEFAULT 1,
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -56,7 +56,7 @@ const initDb = async (): Promise<void> => {
       base_price REAL NOT NULL,
       base_quantity REAL NOT NULL,
       base_entry_cost REAL NOT NULL,
-      updated_at TEXT DEFAULT (datetime('now')),
+      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
       PRIMARY KEY (symbol, mode)
     );
 
@@ -70,8 +70,8 @@ const initDb = async (): Promise<void> => {
       cost REAL NOT NULL,
       status TEXT DEFAULT 'PENDING_SELL',
       binance_sell_order_id TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      filled_at TEXT
+      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
+      filled_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_grid_levels_symbol_mode
@@ -88,6 +88,76 @@ const initDb = async (): Promise<void> => {
     database.exec('ALTER TABLE grid_state ADD COLUMN base_entry_cost REAL DEFAULT 0')
     console.log('[DB] grid_state: Added column base_entry_cost')
   } catch { /* already exists */ }
+
+  try {
+    database.exec('ALTER TABLE trades ADD COLUMN fee REAL DEFAULT 0')
+    console.log('[DB] trades: Added column fee')
+  } catch { /* already exists */ }
+
+  // --- REPAIR MIGRATION: Safely convert remaining strings to Unix Epoch MS ---
+  try {
+    database.exec(`
+      -- Only convert if it's a string and looks like a date (e.g., '2026-04-03...')
+      UPDATE trades 
+        SET timestamp = strftime('%s', timestamp) * 1000 
+        WHERE typeof(timestamp) = 'text' AND timestamp LIKE '%-%';
+
+      UPDATE whitelist 
+        SET updated_at = strftime('%s', updated_at) * 1000 
+        WHERE typeof(updated_at) = 'text' AND updated_at LIKE '%-%';
+
+      UPDATE grid_state 
+        SET updated_at = strftime('%s', updated_at) * 1000 
+        WHERE typeof(updated_at) = 'text' AND updated_at LIKE '%-%';
+
+      UPDATE grid_levels 
+        SET created_at = strftime('%s', created_at) * 1000 
+        WHERE typeof(created_at) = 'text' AND created_at LIKE '%-%';
+
+      UPDATE grid_levels 
+        SET filled_at = strftime('%s', filled_at) * 1000 
+        WHERE typeof(filled_at) = 'text' AND filled_at LIKE '%-%';
+    `)
+    console.log('[DB] Migration repair: Timestamps safely converted to Unix MS')
+  } catch (e) {
+    console.error('[DB] Migration repair warning:', e.message)
+  }
+
+  // --- RECOVERY PATCH: Restore lost history from Binance Screenshot ---
+  try {
+    database.exec(`
+      -- Restore TAO Buy (04-03 17:09:15)
+      UPDATE trades SET timestamp = 1712182155000 
+        WHERE id = (SELECT id FROM trades WHERE symbol = 'TAO/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+      
+      -- Restore RNDR Sell (04-03 14:05:11)
+      UPDATE trades SET timestamp = 1712171111000 
+        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'SELL' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+      
+      -- Restore RNDR Buy (04-03 14:05:10)
+      UPDATE trades SET timestamp = 1712171110000 
+        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+      
+      -- Restore FET Sell (04-03 13:43:18)
+      UPDATE trades SET timestamp = 1712169798000 
+        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'SELL' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+
+      -- Restore FET Buy (04-03 13:43:18)
+      UPDATE trades SET timestamp = 1712169798000 
+        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+
+      -- Restore RNDR Buy (04-03 12:39:38)
+      UPDATE trades SET timestamp = 1712165978000 
+        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+
+      -- Restore FET Buy (04-02 16:07:37)
+      UPDATE trades SET timestamp = 1712092057000 
+        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
+    `)
+    console.log('[DB] Recovery Patch: Restored historical timestamps from Binance history')
+  } catch (e) {
+    console.log('[DB] Recovery Patch: No matching records found or already patched')
+  }
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS candle_cache (
@@ -119,6 +189,8 @@ const initDb = async (): Promise<void> => {
       ['capital_type', 'FIXED'],
       ['capital_value', '100'],
       ['grid_step_percent', '3'],
+      ['trailing_stop_levels', '3'],
+      ['trailing_stop_pct', '0.5'],
       ['window_state', '{"width":1200,"height":750,"x":null,"y":null,"isMaximized":false}']
     ])
   }
@@ -168,7 +240,7 @@ const updateWhitelist = (symbols: string[]): string[] => {
   const tx = database.transaction(() => {
     database.prepare('UPDATE whitelist SET active = 0').run()
     const upsert = database.prepare(
-      'INSERT INTO whitelist (symbol, active) VALUES (?, 1) ON CONFLICT(symbol) DO UPDATE SET active = 1, updated_at = datetime(\'now\')'
+      'INSERT INTO whitelist (symbol, active) VALUES (?, 1) ON CONFLICT(symbol) DO UPDATE SET active = 1, updated_at = (strftime(\'%s\', \'now\') * 1000)'
     )
     for (const symbol of symbols) {
       upsert.run(symbol.toUpperCase())
@@ -188,19 +260,21 @@ const logTrade = (tradeData: {
   quantity: number
   pnl?: number
   roi?: number
+  fee?: number
   reason?: string
+  timestamp?: number
 }, mode = 'LIVE'): void => {
-  const { symbol, side, price, quantity, pnl = 0, roi = 0, reason = '' } = tradeData
+  const { symbol, side, price, quantity, pnl = 0, roi = 0, fee = 0, reason = '', timestamp = Date.now() } = tradeData
   getDb()
     .prepare(
-      'INSERT INTO trades (symbol, side, price, quantity, pnl, roi, mode, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO trades (symbol, side, price, quantity, pnl, roi, fee, mode, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(symbol, side, price, quantity, pnl, roi, mode, reason)
+    .run(symbol, side, price, quantity, pnl, roi, fee, mode, reason, timestamp)
 }
 
 const getRecentTrades = (mode = 'LIVE', limit = 50): any[] => {
   return getDb()
-    .prepare('SELECT * FROM trades WHERE mode = ? ORDER BY timestamp DESC LIMIT ?')
+    .prepare('SELECT * FROM trades WHERE mode = ? ORDER BY id DESC LIMIT ?')
     .all(mode, limit) as any[]
 }
 
@@ -217,11 +291,12 @@ const wipeAllData = (mode = 'LIVE'): boolean => {
   return true
 }
 
-const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate: number; fillRate: number; totalTrades: number } => {
+const getMetrics = (mode = 'LIVE'): { totalPnl: number; totalFees: number; avgRoi: number; winRate: number; fillRate: number; totalTrades: number } => {
   const row = getDb()
     .prepare(
       `SELECT
         COALESCE(SUM(pnl), 0) as total_pnl,
+        COALESCE(SUM(fee), 0) as total_fees,
         COALESCE(AVG(CASE WHEN side = 'SELL' THEN roi END), 0) as avg_roi,
         COALESCE(
           CAST(COUNT(CASE WHEN pnl > 0 AND side = 'SELL' THEN 1 END) AS REAL) /
@@ -238,6 +313,7 @@ const getMetrics = (mode = 'LIVE'): { totalPnl: number; avgRoi: number; winRate:
 
   return {
     totalPnl: row.total_pnl || 0,
+    totalFees: row.total_fees || 0,
     avgRoi: row.avg_roi || 0,
     winRate: row.win_rate || 0,
     fillRate: row.fill_rate || 0,
@@ -273,7 +349,7 @@ const saveGridState = (
       `INSERT INTO grid_state (symbol, mode, base_price, base_quantity, base_entry_cost)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(symbol, mode) DO UPDATE SET
-         base_price = ?, base_quantity = ?, base_entry_cost = ?, updated_at = datetime('now')`
+         base_price = ?, base_quantity = ?, base_entry_cost = ?, updated_at = (strftime('%s', 'now') * 1000)`
     )
     .run(symbol, mode, data.basePrice, data.baseQuantity, data.baseEntryCost,
          data.basePrice, data.baseQuantity, data.baseEntryCost)
@@ -321,7 +397,7 @@ const saveGridLevel = (data: {
 
 const markGridLevelFilled = (id: number): void => {
   getDb()
-    .prepare('UPDATE grid_levels SET status = ?, filled_at = datetime(\'now\') WHERE id = ?')
+    .prepare('UPDATE grid_levels SET status = ?, filled_at = (strftime(\'%s\', \'now\') * 1000) WHERE id = ?')
     .run('FILLED', id)
 }
 

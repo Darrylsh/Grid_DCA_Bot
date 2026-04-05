@@ -134,6 +134,8 @@ export async function runBacktest(
   endDate: string,
   initialEquity: number,
   gridStepPercent: number,
+  trailingStopLevels = 3,
+  trailingStopPct = 0.5,
   onUpdate?: (progress: number, results: any) => void
 ): Promise<any> {
   const gridStep = (gridStepPercent ?? 3) / 100
@@ -168,7 +170,7 @@ export async function runBacktest(
   // Base share: bought at open of first candle
   const firstCandle = candles[0]
   const baseEntryPrice = firstCandle.open
-  const baseQty = shareCost / baseEntryPrice * (1 - FEE_RATE)
+  let baseQty = shareCost / baseEntryPrice * (1 - FEE_RATE)
   const baseCost = shareCost
   totalSpent += shareCost
 
@@ -191,6 +193,13 @@ export async function runBacktest(
   let gridLevelCount = 0
   let totalFeesPaid = baseCost * FEE_RATE
 
+  // Trailing stop state (mirrors live bot)
+  const stopDistance = gridStep * trailingStopPct  // e.g. 2% * 0.5 = 0.01
+  let trailArmed = false
+  let trailHigh = 0
+  let trailStopPrice = 0
+  let baseSoldByTrail = false
+
   const chartData: { t: number; p: number }[] = []
   const totalCandles = candles.length
   const CHART_SAMPLE = Math.max(1, Math.floor(totalCandles / 1500))
@@ -211,6 +220,50 @@ export async function runBacktest(
     }
 
     if (i % 5000 === 0) await new Promise((r) => setTimeout(r, 0))
+
+    // ---- TRAILING STOP CHECK (mirrors processTick in bot.ts) ----
+    // Run before UP/DOWN grid logic so a triggered stop exits immediately
+    if (!baseSoldByTrail) {
+      const levelsUp = Math.log(basePrice / baseEntryPrice) / Math.log(1 + gridStep)
+      if (levelsUp >= trailingStopLevels) {
+        if (!trailArmed) {
+          trailArmed = true
+          trailHigh = close
+          trailStopPrice = trailHigh * (1 - stopDistance)
+        }
+        if (high > trailHigh) {
+          trailHigh = high
+          trailStopPrice = trailHigh * (1 - stopDistance)
+        }
+        // Did the candle LOW breach the stop?
+        if (low <= trailStopPrice) {
+          const fillPrice = trailStopPrice
+          const proceeds = fillPrice * baseQty
+          const fee = proceeds * FEE_RATE
+          const pnl = proceeds - fee - baseCost
+          const roi = (fillPrice - baseEntryPrice) / baseEntryPrice
+          totalRecovered += proceeds - fee
+          realizedCost += baseCost
+          totalFeesPaid += fee
+          trades.push({
+            side: 'SELL',
+            price: fillPrice,
+            quantity: baseQty,
+            cost: baseCost,
+            fee,
+            timestamp: new Date(open_time).toISOString(),
+            reason: 'TRAIL_STOP',
+            pnl,
+            roi
+          })
+          baseQty = 0
+          trailArmed = false
+          baseSoldByTrail = true
+        }
+      } else if (trailArmed) {
+        trailArmed = false // fell back below threshold — disarm
+      }
+    }
 
     // ---- Check if pending limit sells are hit by this candle's HIGH ----
     for (const level of [...pendingLevels]) {
@@ -304,7 +357,7 @@ export async function runBacktest(
       lastProgressReport = progress
 
       const currentPrice = close
-      const unrealizedBase = (currentPrice - baseEntryPrice) * baseQty
+    const unrealizedBase = baseSoldByTrail ? 0 : (currentPrice - baseEntryPrice) * baseQty
       const unrealizedLevels = pendingLevels.reduce(
         (sum, l) => sum + (currentPrice - l.buyPrice) * l.qty, 0
       )
@@ -348,7 +401,7 @@ export async function runBacktest(
 
   // ---- 4. Final Results ----
   const finalPrice = lastCandle.close
-  const unrealizedBase = (finalPrice - baseEntryPrice) * baseQty
+  const unrealizedBase = baseSoldByTrail ? 0 : (finalPrice - baseEntryPrice) * baseQty
   const unrealizedLevels = pendingLevels.reduce(
     (sum, l) => sum + (finalPrice - l.buyPrice) * l.qty, 0
   )

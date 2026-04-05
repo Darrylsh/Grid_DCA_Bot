@@ -192,7 +192,10 @@ app.whenReady().then(async () => {
   handleIPC(
     'bot:runBacktest',
     async (event, symbol: string, start: string, end: string, shareAmount: number, gridStep: number) => {
-      return await runBacktest(symbol, start, end, shareAmount, gridStep, (progress, interimResults) => {
+      const s = getSettings()
+      const trailLevels = parseInt(s.trailing_stop_levels || '3')
+      const trailPct = parseFloat(s.trailing_stop_pct || '0.5')
+      return await runBacktest(symbol, start, end, shareAmount, gridStep, trailLevels, trailPct, (progress, interimResults) => {
         event.sender.send('bt:progress', progress)
         if (interimResults) {
           event.sender.send('bt:update', interimResults)

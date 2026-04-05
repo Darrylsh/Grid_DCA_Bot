@@ -5,7 +5,6 @@ import {
   BarChart2,
   DollarSign,
   Percent,
-  Target,
   Zap,
   RotateCcw,
   Clock,
@@ -16,7 +15,8 @@ import {
   TrendingUp,
   Layers,
   CheckCircle,
-  Shuffle
+  Shuffle,
+  Receipt
 } from 'lucide-react'
 import buySound from './assets/buy.mp3'
 import sellSound from './assets/sell.mp3'
@@ -119,7 +119,7 @@ export default function App() {
     capital_value: '100',
     grid_step_percent: '3'
   })
-  const [stats, setStats] = useState({ totalPnl: 0, avgRoi: 0, winRate: 0, fillRate: 0, unrealizedPnl: 0, totalTrades: 0 })
+  const [stats, setStats] = useState({ totalPnl: 0, totalFees: 0, avgRoi: 0, winRate: 0, fillRate: 0, unrealizedPnl: 0, totalTrades: 0 })
   const [tickFlashing, setTickFlashing] = useState(false)
 
   const [registeringSymbol, setRegisteringSymbol] = useState<string | null>(null)
@@ -231,6 +231,15 @@ export default function App() {
     const list = whitelist.filter((w) => w !== sym)
     setWhitelist(list)
     window.api.saveWhitelist(list)
+
+    // Automatically refresh grid state by purging from local market data if no active position
+    setMarketData((prev) => {
+      const next = { ...prev }
+      if (!next[sym]?.hasBaseShare) {
+        delete next[sym]
+      }
+      return next
+    })
   }
 
   const updateSetting = (key: string, value: string) => {
@@ -397,19 +406,20 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <>
               {/* Stats Grid */}
-              <div className="grid grid-cols-5 gap-3 mb-8">
+              <div className="grid grid-cols-6 gap-3 mb-8 text-[10px]">
                 {[
                   { label: 'Realized PNL', value: `$${stats.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: DollarSign, color: stats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400', bg: 'bg-emerald-500/10' },
+                  { label: 'Total Fees', value: `$${stats.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Receipt, color: 'text-amber-400', bg: 'bg-amber-500/10' },
                   { label: 'Avg Grid ROI', value: `${(stats.avgRoi * 100).toFixed(2)}%`, icon: Percent, color: stats.avgRoi >= 0 ? 'text-blue-400' : 'text-rose-400', bg: 'bg-blue-500/10' },
                   { label: 'Win Rate', value: `${stats.winRate.toFixed(1)}%`, icon: CheckCircle, color: 'text-purple-400', bg: 'bg-purple-500/10' },
                   { label: 'Fill Rate', value: `${stats.fillRate.toFixed(1)}%`, icon: Shuffle, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
                   { label: 'Unrealized PNL', value: `$${stats.unrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Zap, color: stats.unrealizedPnl >= 0 ? 'text-amber-400' : 'text-rose-400', bg: 'bg-amber-500/10' }
                 ].map((stat, i) => (
-                  <div key={i} className="bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 flex items-center gap-4 hover:bg-slate-800/60 transition-colors">
-                    <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}><stat.icon size={24} /></div>
+                  <div key={i} className="bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl p-4 flex items-center gap-3 hover:bg-slate-800/60 transition-colors">
+                    <div className={`p-2 rounded-xl ${stat.bg} ${stat.color}`}><stat.icon size={20} /></div>
                     <div>
-                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">{stat.label}</p>
-                      <h3 className={`text-2xl font-bold font-mono tracking-tight ${stat.color}`}>{stat.value}</h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">{stat.label}</p>
+                      <h3 className={`text-xl font-bold font-mono tracking-tight ${stat.color}`}>{stat.value}</h3>
                     </div>
                   </div>
                 ))}
@@ -467,12 +477,21 @@ export default function App() {
                                 </td>
                                 <td className="p-4 font-mono font-bold">${row.currentPrice?.toFixed(4) ?? '-'}</td>
                                 <td className="p-4 font-mono text-amber-400">
-                                  {row.hasBaseShare ? `$${row.basePrice?.toFixed(4)}` : <span className="text-slate-600 italic text-xs">No base share</span>}
+                                  {row.hasBaseShare ? (
+                                    <div className="flex flex-col gap-0.5">
+                                      <span>${row.basePrice?.toFixed(4)}</span>
+                                      {row.trailActive && (
+                                        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5 animate-pulse">
+                                          {'\u{1F512}'} Stop: ${row.trailStopPrice?.toFixed(4)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : <span className="text-slate-600 italic text-xs">No base share</span>}
                                 </td>
                                 <td className="p-4">
                                   {pct != null ? (
-                                    <span className={`flex items-center gap-1 font-mono font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                      {isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                                    <span className={`flex items-center gap-1 font-mono font-bold ${row.trailActive ? 'text-amber-400' : isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      {row.trailActive ? '\u{1F512}' : isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                                       {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
                                     </span>
                                   ) : <span className="text-slate-600">-</span>}
@@ -578,7 +597,9 @@ export default function App() {
                     <div className="text-slate-600 italic">No activity recorded yet...</div>
                   ) : logs.map((log, i) => (
                     <div key={i} className="flex gap-3 border-l-2 border-slate-700 pl-3 py-1 hover:border-indigo-500 transition-colors">
-                      <span className="text-slate-500 shrink-0">[{new Date(log.timestamp || Date.now()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}]</span>
+                      <span className="text-slate-500 shrink-0">
+                        [{log.timestamp ? new Date(Number(log.timestamp)).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '') : 'No Time'}]
+                      </span>
                       <div className="flex justify-between w-full pr-2">
                         <span className={log.side === 'BUY' ? 'text-emerald-400 font-bold' : log.side === 'SELL' ? 'text-rose-400 font-bold' : 'text-indigo-300'}>
                           {log.side ? `${log.side} ${stripUSDT(log.symbol)} @ $${Number(log.price).toFixed(4)} [${log.reason || ''}]` : log.message || JSON.stringify(log)}
@@ -796,6 +817,27 @@ export default function App() {
                       <span className="absolute right-3 top-3 text-slate-500 font-bold">%</span>
                     </div>
                     <p className="text-xs text-slate-500 italic">Buy/sell trigger distance from reference price.</p>
+                  </div>
+                </div>
+
+                {/* Trailing Stop */}
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Trail Stop Trigger (levels)</label>
+                    <input type="number" value={settings.trailing_stop_levels || '3'} min="1" max="20" step="1"
+                      onChange={(e) => updateSetting('trailing_stop_levels', e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-amber-500 transition-colors" />
+                    <p className="text-xs text-slate-500 italic">Levels above entry to arm the trailing stop (e.g. 3 = +6% at 2% grid).</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Trail Stop Distance (×grid)</label>
+                    <div className="relative">
+                      <input type="number" value={settings.trailing_stop_pct || '0.5'} min="0.1" max="2" step="0.1"
+                        onChange={(e) => updateSetting('trailing_stop_pct', e.target.value)}
+                        className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-amber-500 transition-colors pr-8" />
+                      <span className="absolute right-3 top-3 text-slate-500 font-bold text-xs">×g</span>
+                    </div>
+                    <p className="text-xs text-slate-500 italic">Stop distance as fraction of grid step (0.5 = ½ grid = 1% at 2% grid).</p>
                   </div>
                 </div>
               </div>
