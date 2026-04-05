@@ -26,7 +26,11 @@
     "@electron-toolkit/utils": "^4.0.0",
     "better-sqlite3": "^12.8.0",
     "dotenv": "^17.3.1",
-    "lucide-react": "^1.7.0"
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^1.7.0",
+    "pg": "^8.20.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
@@ -35,10 +39,13 @@
     "@tailwindcss/vite": "^4.2.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.1",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/socket.io": "^3.0.1",
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.27",
+    "drizzle-kit": "^0.31.10",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",

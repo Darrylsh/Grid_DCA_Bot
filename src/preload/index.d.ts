@@ -42,6 +42,8 @@ export interface IElectronAPI {
   onTradeExecuted: (callback: (data: any) => void) => void
   onBalanceUpdate: (callback: (data: any) => void) => void
   onMonitoringUpdate: (callback: (data: any) => void) => void
+  onConnectionStatus: (callback: (status: boolean) => void) => void
+  getConnectionStatus: () => Promise<boolean>
 
   // Whitelist
   getWhitelist: () => Promise<string[]>

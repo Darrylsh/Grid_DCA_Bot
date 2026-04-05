@@ -18,6 +18,7 @@ const api = {
     ipcRenderer.invoke('bot:manualTrade', symbol, side),
 
   // ---- Events (bot → renderer) ----
+  getConnectionStatus: () => ipcRenderer.invoke('bot:getConnectionStatus'),
   onMarketUpdate: (callback: (data: any) => void) => {
     ipcRenderer.on('bot:marketUpdate', (_event, data) => callback(data))
   },
@@ -29,6 +30,9 @@ const api = {
   },
   onMonitoringUpdate: (callback: (data: any) => void) => {
     ipcRenderer.on('bot:monitoringUpdate', (_event, data) => callback(data))
+  },
+  onConnectionStatus: (callback: (status: boolean) => void) => {
+    ipcRenderer.on('bot:connectionStatus', (_event, status) => callback(status))
   },
 
   // ---- Whitelist ----

@@ -54,7 +54,7 @@ const fetchAndCacheCandles = async (
         volume: parseFloat(k[5])
       }))
 
-      saveCandleBatch(symbol, candles)
+      await saveCandleBatch(symbol, candles)
       totalFetched += candles.length
 
       const lastCandle = klines[klines.length - 1]
@@ -85,8 +85,8 @@ const ensureCandleData = async (
   endMs: number,
   onProgress?: (msg: string) => void
 ): Promise<void> => {
-  const earliest = getEarliestCachedCandle(symbol)
-  const latest = getLatestCachedCandle(symbol)
+  const earliest = await getEarliestCachedCandle(symbol)
+  const latest = await getLatestCachedCandle(symbol)
 
   let needsFetch = false
   let fetchStart = startMs
@@ -154,7 +154,7 @@ export async function runBacktest(
     onUpdate?.(0, { status: 'fetching', message: msg })
   })
 
-  const candles = getCachedCandles(symbol, startMs, endMs)
+  const candles = await getCachedCandles(symbol, startMs, endMs)
   if (!candles || candles.length === 0) {
     return { error: `No candle data found for ${symbol} in the selected range.` }
   }

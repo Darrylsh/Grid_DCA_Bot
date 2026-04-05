@@ -1,259 +1,148 @@
-// @ts-nocheck
-import Database from 'better-sqlite3'
-import path from 'path'
-import { app } from 'electron'
+import 'dotenv/config';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { eq, and, sql, desc, asc, sum, avg, count } from 'drizzle-orm';
+import pg from 'pg';
+import * as schema from './db/schema';
 
-// Store the DB in the user's app data directory so it persists across installs
-const DB_PATH = app
-  ? path.join(app.getPath('userData'), 'gridbot.db')
-  : path.join(__dirname, '../../gridbot.db')
+// Connection details from .env
+const {
+  DB_USER,
+  DB_PASS,
+  DB_NAME,
+  DB_HOST,
+  DB_PORT,
+} = process.env;
 
-let db: Database.Database
+const connectionString = `postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 
-const getDb = (): Database.Database => {
-  if (!db) {
-    db = new Database(DB_PATH)
-    db.pragma('journal_mode = WAL') // Better concurrent read performance
-    db.pragma('foreign_keys = ON')
-  }
-  return db
-}
+const pool = new pg.Pool({ connectionString });
+const db = drizzle(pool, { schema });
 
 // ---------------------------------------------------------------------------
 // Schema Initialization
 // ---------------------------------------------------------------------------
 const initDb = async (): Promise<void> => {
-  const database = getDb()
-
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS trades (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      symbol TEXT NOT NULL,
-      side TEXT NOT NULL,
-      price REAL NOT NULL,
-      quantity REAL NOT NULL,
-      timestamp INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      pnl REAL DEFAULT 0,
-      roi REAL DEFAULT 0,
-      mode TEXT DEFAULT 'LIVE',
-      reason TEXT DEFAULT ''
-    );
-
-    CREATE TABLE IF NOT EXISTS whitelist (
-      symbol TEXT PRIMARY KEY,
-      active INTEGER DEFAULT 1,
-      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS grid_state (
-      symbol TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      base_price REAL NOT NULL,
-      base_quantity REAL NOT NULL,
-      base_entry_cost REAL NOT NULL,
-      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      PRIMARY KEY (symbol, mode)
-    );
-
-    CREATE TABLE IF NOT EXISTS grid_levels (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      symbol TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      buy_price REAL NOT NULL,
-      sell_price REAL NOT NULL,
-      quantity REAL NOT NULL,
-      cost REAL NOT NULL,
-      status TEXT DEFAULT 'PENDING_SELL',
-      binance_sell_order_id TEXT,
-      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      filled_at INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_grid_levels_symbol_mode
-      ON grid_levels (symbol, mode, status);
-  `)
-
-  // --- MIGRATIONS: Add columns that were missed in earlier versions ---
+  console.log('[DB] Ensuring PostgreSQL tables exist...');
   try {
-    database.exec('ALTER TABLE grid_state ADD COLUMN base_quantity REAL DEFAULT 0')
-    console.log('[DB] grid_state: Added column base_quantity')
-  } catch { /* already exists */ }
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS trades (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        price DOUBLE PRECISION NOT NULL,
+        quantity DOUBLE PRECISION NOT NULL,
+        timestamp BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000),
+        pnl DOUBLE PRECISION DEFAULT 0,
+        roi DOUBLE PRECISION DEFAULT 0,
+        mode TEXT DEFAULT 'LIVE',
+        reason TEXT DEFAULT '',
+        fee DOUBLE PRECISION DEFAULT 0
+      );
 
-  try {
-    database.exec('ALTER TABLE grid_state ADD COLUMN base_entry_cost REAL DEFAULT 0')
-    console.log('[DB] grid_state: Added column base_entry_cost')
-  } catch { /* already exists */ }
+      CREATE TABLE IF NOT EXISTS whitelist (
+        symbol TEXT PRIMARY KEY,
+        active BOOLEAN DEFAULT TRUE,
+        updated_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)
+      );
 
-  try {
-    database.exec('ALTER TABLE trades ADD COLUMN fee REAL DEFAULT 0')
-    console.log('[DB] trades: Added column fee')
-  } catch { /* already exists */ }
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
 
-  // --- REPAIR MIGRATION: Safely convert remaining strings to Unix Epoch MS ---
-  try {
-    database.exec(`
-      -- Only convert if it's a string and looks like a date (e.g., '2026-04-03...')
-      UPDATE trades 
-        SET timestamp = strftime('%s', timestamp) * 1000 
-        WHERE typeof(timestamp) = 'text' AND timestamp LIKE '%-%';
+      CREATE TABLE IF NOT EXISTS grid_state (
+        symbol TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        base_price DOUBLE PRECISION NOT NULL,
+        base_quantity DOUBLE PRECISION NOT NULL,
+        base_entry_cost DOUBLE PRECISION NOT NULL,
+        updated_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000),
+        PRIMARY KEY (symbol, mode)
+      );
 
-      UPDATE whitelist 
-        SET updated_at = strftime('%s', updated_at) * 1000 
-        WHERE typeof(updated_at) = 'text' AND updated_at LIKE '%-%';
+      CREATE TABLE IF NOT EXISTS grid_levels (
+        id SERIAL PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        buy_price DOUBLE PRECISION NOT NULL,
+        sell_price DOUBLE PRECISION NOT NULL,
+        quantity DOUBLE PRECISION NOT NULL,
+        cost DOUBLE PRECISION NOT NULL,
+        status TEXT DEFAULT 'PENDING_SELL',
+        binance_sell_order_id TEXT,
+        created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000),
+        filled_at BIGINT,
+        CONSTRAINT grid_levels_symbol_mode_status_idx UNIQUE (symbol, mode, status, id)
+      );
 
-      UPDATE grid_state 
-        SET updated_at = strftime('%s', updated_at) * 1000 
-        WHERE typeof(updated_at) = 'text' AND updated_at LIKE '%-%';
-
-      UPDATE grid_levels 
-        SET created_at = strftime('%s', created_at) * 1000 
-        WHERE typeof(created_at) = 'text' AND created_at LIKE '%-%';
-
-      UPDATE grid_levels 
-        SET filled_at = strftime('%s', filled_at) * 1000 
-        WHERE typeof(filled_at) = 'text' AND filled_at LIKE '%-%';
-    `)
-    console.log('[DB] Migration repair: Timestamps safely converted to Unix MS')
-  } catch (e) {
-    console.error('[DB] Migration repair warning:', e.message)
+      CREATE TABLE IF NOT EXISTS candle_cache (
+        symbol TEXT NOT NULL,
+        open_time BIGINT NOT NULL,
+        open DOUBLE PRECISION NOT NULL,
+        high DOUBLE PRECISION NOT NULL,
+        low DOUBLE PRECISION NOT NULL,
+        close DOUBLE PRECISION NOT NULL,
+        volume DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (symbol, open_time)
+      );
+    `);
+    console.log(`[DB] Postgres initialized at: ${DB_HOST}:${DB_PORT}/${DB_NAME}`);
+  } catch (e: any) {
+    console.error('[DB] Initialization error:', e.message);
   }
-
-  // --- RECOVERY PATCH: Restore lost history from Binance Screenshot ---
-  try {
-    database.exec(`
-      -- Restore TAO Buy (04-03 17:09:15)
-      UPDATE trades SET timestamp = 1712182155000 
-        WHERE id = (SELECT id FROM trades WHERE symbol = 'TAO/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-      
-      -- Restore RNDR Sell (04-03 14:05:11)
-      UPDATE trades SET timestamp = 1712171111000 
-        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'SELL' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-      
-      -- Restore RNDR Buy (04-03 14:05:10)
-      UPDATE trades SET timestamp = 1712171110000 
-        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-      
-      -- Restore FET Sell (04-03 13:43:18)
-      UPDATE trades SET timestamp = 1712169798000 
-        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'SELL' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-
-      -- Restore FET Buy (04-03 13:43:18)
-      UPDATE trades SET timestamp = 1712169798000 
-        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-
-      -- Restore RNDR Buy (04-03 12:39:38)
-      UPDATE trades SET timestamp = 1712165978000 
-        WHERE id = (SELECT id FROM trades WHERE symbol = 'RENDER/USDT' AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-
-      -- Restore FET Buy (04-02 16:07:37)
-      UPDATE trades SET timestamp = 1712092057000 
-        WHERE id = (SELECT id FROM trades WHERE (symbol = 'FET/USDT' OR symbol = 'ASI/USDT') AND side = 'BUY' AND (timestamp IS NULL OR timestamp = 0) ORDER BY id DESC LIMIT 1);
-    `)
-    console.log('[DB] Recovery Patch: Restored historical timestamps from Binance history')
-  } catch (e) {
-    console.log('[DB] Recovery Patch: No matching records found or already patched')
-  }
-
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS candle_cache (
-      symbol TEXT NOT NULL,
-      open_time INTEGER NOT NULL,
-      open REAL NOT NULL,
-      high REAL NOT NULL,
-      low REAL NOT NULL,
-      close REAL NOT NULL,
-      volume REAL NOT NULL,
-      PRIMARY KEY (symbol, open_time)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_candle_cache_symbol_time
-      ON candle_cache (symbol, open_time);
-  `)
-
-  // Seed defaults if settings table is empty
-  const count = database.prepare('SELECT COUNT(*) as cnt FROM settings').get() as { cnt: number }
-  if (count.cnt === 0) {
-    const insert = database.prepare(
-      'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)'
-    )
-    const insertMany = database.transaction((rows: [string, string][]) => {
-      for (const [key, value] of rows) insert.run(key, value)
-    })
-    insertMany([
-      ['trading_mode', 'LIVE'],
-      ['capital_type', 'FIXED'],
-      ['capital_value', '100'],
-      ['grid_step_percent', '3'],
-      ['trailing_stop_levels', '3'],
-      ['trailing_stop_pct', '0.5'],
-      ['window_state', '{"width":1200,"height":750,"x":null,"y":null,"isMaximized":false}']
-    ])
-  }
-
-  // Seed default whitelist if empty
-  const wlCount = database.prepare('SELECT COUNT(*) as cnt FROM whitelist').get() as { cnt: number }
-  if (wlCount.cnt === 0) {
-    database.prepare("INSERT OR IGNORE INTO whitelist (symbol, active) VALUES ('BTCUSDT', 1)").run()
-  }
-
-  console.log(`[DB] SQLite initialized at: ${DB_PATH}`)
 }
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-const getSettings = (): Record<string, string> => {
-  const rows = getDb().prepare('SELECT key, value FROM settings').all() as {
-    key: string
-    value: string
-  }[]
-  const settings: Record<string, string> = {}
+const getSettings = async (): Promise<Record<string, string>> => {
+  const rows = await db.select().from(schema.settings);
+  const settings: Record<string, string> = {};
   rows.forEach((r) => {
-    settings[r.key] = r.value
-  })
-  return settings
+    settings[r.key] = r.value;
+  });
+  return settings;
 }
 
-const updateSetting = (key: string, value: string): void => {
-  getDb()
-    .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?')
-    .run(key, value, value)
+const updateSetting = async (key: string, value: string): Promise<void> => {
+  await db.insert(schema.settings)
+    .values({ key, value })
+    .onConflictDoUpdate({
+      target: schema.settings.key,
+      set: { value }
+    });
 }
 
 // ---------------------------------------------------------------------------
 // Whitelist
 // ---------------------------------------------------------------------------
-const getWhitelist = (): string[] => {
-  const rows = getDb().prepare('SELECT symbol FROM whitelist WHERE active = 1').all() as {
-    symbol: string
-  }[]
-  return rows.map((r) => r.symbol)
+const getWhitelist = async (): Promise<string[]> => {
+  const rows = await db.select()
+    .from(schema.whitelist)
+    .where(eq(schema.whitelist.active, true));
+  return rows.map((r) => r.symbol);
 }
 
-const updateWhitelist = (symbols: string[]): string[] => {
-  const database = getDb()
-  const tx = database.transaction(() => {
-    database.prepare('UPDATE whitelist SET active = 0').run()
-    const upsert = database.prepare(
-      'INSERT INTO whitelist (symbol, active) VALUES (?, 1) ON CONFLICT(symbol) DO UPDATE SET active = 1, updated_at = (strftime(\'%s\', \'now\') * 1000)'
-    )
+const updateWhitelist = async (symbols: string[]): Promise<string[]> => {
+  await db.transaction(async (tx) => {
+    await tx.update(schema.whitelist).set({ active: false });
     for (const symbol of symbols) {
-      upsert.run(symbol.toUpperCase())
+      const sym = symbol.toUpperCase();
+      await tx.insert(schema.whitelist)
+        .values({ symbol: sym, active: true, updatedAt: Date.now() })
+        .onConflictDoUpdate({
+          target: schema.whitelist.symbol,
+          set: { active: true, updatedAt: Date.now() }
+        });
     }
-  })
-  tx()
-  return getWhitelist()
+  });
+  return getWhitelist();
 }
 
 // ---------------------------------------------------------------------------
 // Trades
 // ---------------------------------------------------------------------------
-const logTrade = (tradeData: {
+const logTrade = async (tradeData: {
   symbol: string
   side: string
   price: number
@@ -263,118 +152,132 @@ const logTrade = (tradeData: {
   fee?: number
   reason?: string
   timestamp?: number
-}, mode = 'LIVE'): void => {
-  const { symbol, side, price, quantity, pnl = 0, roi = 0, fee = 0, reason = '', timestamp = Date.now() } = tradeData
-  getDb()
-    .prepare(
-      'INSERT INTO trades (symbol, side, price, quantity, pnl, roi, fee, mode, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    )
-    .run(symbol, side, price, quantity, pnl, roi, fee, mode, reason, timestamp)
+}, mode = 'LIVE'): Promise<void> => {
+  const { symbol, side, price, quantity, pnl = 0, roi = 0, fee = 0, reason = '', timestamp = Date.now() } = tradeData;
+  await db.insert(schema.trades).values({
+    symbol, side, price, quantity, pnl, roi, fee, mode, reason, timestamp
+  });
 }
 
-const getRecentTrades = (mode = 'LIVE', limit = 50): any[] => {
-  return getDb()
-    .prepare('SELECT * FROM trades WHERE mode = ? ORDER BY id DESC LIMIT ?')
-    .all(mode, limit) as any[]
+const getRecentTrades = async (mode = 'LIVE', limit = 50): Promise<any[]> => {
+  return await db.select()
+    .from(schema.trades)
+    .where(eq(schema.trades.mode, mode))
+    .orderBy(desc(schema.trades.id))
+    .limit(limit);
 }
 
-const clearTradeHistory = (mode = 'LIVE'): boolean => {
-  getDb().prepare('DELETE FROM trades WHERE mode = ?').run(mode)
-  return true
+const clearTradeHistory = async (mode = 'LIVE'): Promise<boolean> => {
+  await db.delete(schema.trades).where(eq(schema.trades.mode, mode));
+  return true;
 }
 
-const wipeAllData = (mode = 'LIVE'): boolean => {
-  const database = getDb()
-  database.prepare('DELETE FROM trades WHERE mode = ?').run(mode)
-  database.prepare('DELETE FROM grid_state WHERE mode = ?').run(mode)
-  database.prepare('DELETE FROM grid_levels WHERE mode = ?').run(mode)
-  return true
+const wipeAllData = async (mode = 'LIVE'): Promise<boolean> => {
+  await db.delete(schema.trades).where(eq(schema.trades.mode, mode));
+  await db.delete(schema.gridState).where(eq(schema.gridState.mode, mode));
+  await db.delete(schema.gridLevels).where(eq(schema.gridLevels.mode, mode));
+  return true;
 }
 
-const getMetrics = (mode = 'LIVE'): { totalPnl: number; totalFees: number; avgRoi: number; winRate: number; fillRate: number; totalTrades: number } => {
-  const row = getDb()
-    .prepare(
-      `SELECT
-        COALESCE(SUM(pnl), 0) as total_pnl,
-        COALESCE(SUM(fee), 0) as total_fees,
-        COALESCE(AVG(CASE WHEN side = 'SELL' THEN roi END), 0) as avg_roi,
-        COALESCE(
-          CAST(COUNT(CASE WHEN pnl > 0 AND side = 'SELL' THEN 1 END) AS REAL) /
-          NULLIF(COUNT(CASE WHEN side = 'SELL' THEN 1 END), 0) * 100
-        , 0) as win_rate,
-        COALESCE(
-          CAST(COUNT(CASE WHEN side = 'SELL' THEN 1 END) AS REAL) /
-          NULLIF(COUNT(CASE WHEN side = 'BUY' THEN 1 END), 0) * 100
-        , 0) as fill_rate,
-        COUNT(CASE WHEN side = 'SELL' THEN 1 END) as total_trades
-      FROM trades WHERE mode = ?`
-    )
-    .get(mode) as any
+const getMetrics = async (mode = 'LIVE'): Promise<{ totalPnl: number; totalFees: number; avgRoi: number; winRate: number; fillRate: number; totalTrades: number }> => {
+  const [row] = await db.select({
+    totalPnl: sum(schema.trades.pnl),
+    totalFees: sum(schema.trades.fee),
+    avgRoi: avg(sql`CASE WHEN side = 'SELL' THEN roi END`),
+    winCount: count(sql`CASE WHEN pnl > 0 AND side = 'SELL' THEN 1 END`),
+    sellCount: count(sql`CASE WHEN side = 'SELL' THEN 1 END`),
+    buyCount: count(sql`CASE WHEN side = 'BUY' THEN 1 END`),
+    totalTrades: count(sql`CASE WHEN side = 'SELL' THEN 1 END`)
+  })
+  .from(schema.trades)
+  .where(eq(schema.trades.mode, mode));
+
+  const totalPnl = Number(row.totalPnl) || 0;
+  const totalFees = Number(row.totalFees) || 0;
+  const avgRoi = Number(row.avgRoi) || 0;
+  const winCount = Number(row.winCount) || 0;
+  const sellCount = Number(row.sellCount) || 0;
+  const buyCount = Number(row.buyCount) || 0;
+  const totalTrades = Number(row.totalTrades) || 0;
+
+  const winRate = sellCount > 0 ? (winCount / sellCount) * 100 : 0;
+  const fillRate = buyCount > 0 ? (sellCount / buyCount) * 100 : 0;
 
   return {
-    totalPnl: row.total_pnl || 0,
-    totalFees: row.total_fees || 0,
-    avgRoi: row.avg_roi || 0,
-    winRate: row.win_rate || 0,
-    fillRate: row.fill_rate || 0,
-    totalTrades: row.total_trades || 0
+    totalPnl,
+    totalFees,
+    avgRoi,
+    winRate,
+    fillRate,
+    totalTrades
   }
 }
 
 // ---------------------------------------------------------------------------
 // Grid State (base share tracking)
 // ---------------------------------------------------------------------------
-const getGridState = (mode = 'LIVE'): Record<string, { basePrice: number; baseQuantity: number; baseEntryCost: number }> => {
-  const rows = getDb()
-    .prepare('SELECT * FROM grid_state WHERE mode = ?')
-    .all(mode) as any[]
-  const state: Record<string, any> = {}
+const getGridState = async (mode = 'LIVE'): Promise<Record<string, { basePrice: number; baseQuantity: number; baseEntryCost: number }>> => {
+  const rows = await db.select().from(schema.gridState).where(eq(schema.gridState.mode, mode));
+  const state: Record<string, any> = {};
   rows.forEach((r) => {
     state[r.symbol] = {
-      basePrice: r.base_price,
-      baseQuantity: r.base_quantity,
-      baseEntryCost: r.base_entry_cost
-    }
-  })
-  return state
+      basePrice: r.basePrice,
+      baseQuantity: r.baseQuantity,
+      baseEntryCost: r.baseEntryCost
+    };
+  });
+  return state;
 }
 
-const saveGridState = (
+const saveGridState = async (
   symbol: string,
   data: { basePrice: number; baseQuantity: number; baseEntryCost: number },
   mode = 'LIVE'
-): void => {
-  getDb()
-    .prepare(
-      `INSERT INTO grid_state (symbol, mode, base_price, base_quantity, base_entry_cost)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(symbol, mode) DO UPDATE SET
-         base_price = ?, base_quantity = ?, base_entry_cost = ?, updated_at = (strftime('%s', 'now') * 1000)`
-    )
-    .run(symbol, mode, data.basePrice, data.baseQuantity, data.baseEntryCost,
-         data.basePrice, data.baseQuantity, data.baseEntryCost)
+): Promise<void> => {
+  await db.insert(schema.gridState)
+    .values({
+      symbol, mode, basePrice: data.basePrice, baseQuantity: data.baseQuantity, baseEntryCost: data.baseEntryCost
+    })
+    .onConflictDoUpdate({
+      target: [schema.gridState.symbol, schema.gridState.mode],
+      set: {
+        basePrice: data.basePrice,
+        baseQuantity: data.baseQuantity,
+        baseEntryCost: data.baseEntryCost,
+        updatedAt: Date.now()
+      }
+    });
 }
 
-const deleteGridState = (symbol: string, mode = 'LIVE'): void => {
-  getDb().prepare('DELETE FROM grid_state WHERE symbol = ? AND mode = ?').run(symbol, mode)
+const deleteGridState = async (symbol: string, mode = 'LIVE'): Promise<void> => {
+  await db.delete(schema.gridState)
+    .where(and(eq(schema.gridState.symbol, symbol), eq(schema.gridState.mode, mode)));
 }
 
 // ---------------------------------------------------------------------------
 // Grid Levels (individual DCA buy + pending sell)
 // ---------------------------------------------------------------------------
-const getGridLevels = (symbol: string, mode = 'LIVE'): any[] => {
-  return getDb()
-    .prepare('SELECT * FROM grid_levels WHERE symbol = ? AND mode = ? AND status = ? ORDER BY buy_price DESC')
-    .all(symbol, mode, 'PENDING_SELL') as any[]
+const getGridLevels = async (symbol: string, mode = 'LIVE'): Promise<any[]> => {
+  return await db.select()
+    .from(schema.gridLevels)
+    .where(and(
+      eq(schema.gridLevels.symbol, symbol),
+      eq(schema.gridLevels.mode, mode),
+      eq(schema.gridLevels.status, 'PENDING_SELL')
+    ))
+    .orderBy(desc(schema.gridLevels.buyPrice));
 }
 
-const getAllActiveGridLevels = (mode = 'LIVE'): any[] => {
-  return getDb()
-    .prepare('SELECT * FROM grid_levels WHERE mode = ? AND status = ?')
-    .all(mode, 'PENDING_SELL') as any[]
+const getAllActiveGridLevels = async (mode = 'LIVE'): Promise<any[]> => {
+  return await db.select()
+    .from(schema.gridLevels)
+    .where(and(
+      eq(schema.gridLevels.mode, mode),
+      eq(schema.gridLevels.status, 'PENDING_SELL')
+    ));
 }
 
-const saveGridLevel = (data: {
+const saveGridLevel = async (data: {
   symbol: string
   mode: string
   buyPrice: number
@@ -382,74 +285,83 @@ const saveGridLevel = (data: {
   quantity: number
   cost: number
   binanceSellOrderId?: string
-}): number => {
-  const result = getDb()
-    .prepare(
-      `INSERT INTO grid_levels (symbol, mode, buy_price, sell_price, quantity, cost, binance_sell_order_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      data.symbol, data.mode, data.buyPrice, data.sellPrice,
-      data.quantity, data.cost, data.binanceSellOrderId || null
-    )
-  return result.lastInsertRowid as number
+}): Promise<number> => {
+  const [result] = await db.insert(schema.gridLevels)
+    .values({
+      symbol: data.symbol,
+      mode: data.mode,
+      buyPrice: data.buyPrice,
+      sellPrice: data.sellPrice,
+      quantity: data.quantity,
+      cost: data.cost,
+      binanceSellOrderId: data.binanceSellOrderId || null
+    })
+    .returning({ id: schema.gridLevels.id });
+  return result.id;
 }
 
-const markGridLevelFilled = (id: number): void => {
-  getDb()
-    .prepare('UPDATE grid_levels SET status = ?, filled_at = (strftime(\'%s\', \'now\') * 1000) WHERE id = ?')
-    .run('FILLED', id)
+const markGridLevelFilled = async (id: number): Promise<void> => {
+  await db.update(schema.gridLevels)
+    .set({ status: 'FILLED', filledAt: Date.now() })
+    .where(eq(schema.gridLevels.id, id));
 }
 
-const deleteAllGridLevels = (symbol: string, mode = 'LIVE'): void => {
-  getDb().prepare('DELETE FROM grid_levels WHERE symbol = ? AND mode = ?').run(symbol, mode)
+const deleteAllGridLevels = async (symbol: string, mode = 'LIVE'): Promise<void> => {
+  await db.delete(schema.gridLevels)
+    .where(and(eq(schema.gridLevels.symbol, symbol), eq(schema.gridLevels.mode, mode)));
 }
 
-const updateGridLevelOrderId = (id: number, orderId: string): void => {
-  getDb()
-    .prepare('UPDATE grid_levels SET binance_sell_order_id = ? WHERE id = ?')
-    .run(orderId, id)
+const updateGridLevelOrderId = async (id: number, orderId: string): Promise<void> => {
+  await db.update(schema.gridLevels)
+    .set({ binanceSellOrderId: orderId })
+    .where(eq(schema.gridLevels.id, id));
 }
 
 // ---------------------------------------------------------------------------
 // Candle Cache (for backtesting)
 // ---------------------------------------------------------------------------
-const saveCandleBatch = (symbol: string, candles: {
+const saveCandleBatch = async (symbol: string, candles: {
   openTime: number; open: number; high: number; low: number; close: number; volume: number
-}[]): void => {
-  if (!candles || candles.length === 0) return
-  const insert = getDb().prepare(
-    `INSERT OR IGNORE INTO candle_cache (symbol, open_time, open, high, low, close, volume)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  )
-  const tx = getDb().transaction(() => {
-    for (const c of candles) {
-      insert.run(symbol, c.openTime, c.open, c.high, c.low, c.close, c.volume)
-    }
-  })
-  tx()
+}[]): Promise<void> => {
+  if (!candles || candles.length === 0) return;
+  
+  const batchSize = 500;
+  for (let i = 0; i < candles.length; i += batchSize) {
+    const batch = candles.slice(i, i + batchSize).map(c => ({
+      symbol,
+      openTime: Math.floor(c.openTime),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume
+    }));
+    await db.insert(schema.candleCache).values(batch).onConflictDoNothing();
+  }
 }
 
-const getCachedCandles = (symbol: string, fromMs: number, toMs: number): any[] => {
-  return getDb()
-    .prepare(
-      'SELECT * FROM candle_cache WHERE symbol = ? AND open_time >= ? AND open_time <= ? ORDER BY open_time ASC'
-    )
-    .all(symbol, fromMs, toMs) as any[]
+const getCachedCandles = async (symbol: string, fromMs: number, toMs: number): Promise<any[]> => {
+  return await db.select()
+    .from(schema.candleCache)
+    .where(and(
+      eq(schema.candleCache.symbol, symbol),
+      sql`open_time >= ${fromMs} AND open_time <= ${toMs}`
+    ))
+    .orderBy(asc(schema.candleCache.openTime));
 }
 
-const getEarliestCachedCandle = (symbol: string): number | null => {
-  const row = getDb()
-    .prepare('SELECT MIN(open_time) as min_time FROM candle_cache WHERE symbol = ?')
-    .get(symbol) as { min_time: number | null }
-  return row.min_time
+const getEarliestCachedCandle = async (symbol: string): Promise<number | null> => {
+  const [row] = await db.select({ minTime: sql`MIN(open_time)` })
+    .from(schema.candleCache)
+    .where(eq(schema.candleCache.symbol, symbol));
+  return row?.minTime ? Number(row.minTime) : null;
 }
 
-const getLatestCachedCandle = (symbol: string): number | null => {
-  const row = getDb()
-    .prepare('SELECT MAX(open_time) as max_time FROM candle_cache WHERE symbol = ?')
-    .get(symbol) as { max_time: number | null }
-  return row.max_time
+const getLatestCachedCandle = async (symbol: string): Promise<number | null> => {
+  const [row] = await db.select({ maxTime: sql`MAX(open_time)` })
+    .from(schema.candleCache)
+    .where(eq(schema.candleCache.symbol, symbol));
+  return row?.maxTime ? Number(row.maxTime) : null;
 }
 
 export {

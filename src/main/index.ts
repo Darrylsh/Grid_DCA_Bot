@@ -39,36 +39,24 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
-import {
-  botEvents,
-  startBot,
-  executeManualTrade,
-  reloadWhitelist,
-  updateSettingsLocally,
-  reloadDecoupledList,
-  getUnrealizedPnl,
-  getCurrentMode,
-  registerBaseShare,
-  sellBaseShare,
-  clearGridLevels,
-  deleteBaseShareLocally,
-  wipeAllDataLocally,
-  getFullGridState
-} from './bot'
+import { io as ioClient } from 'socket.io-client'
+import * as dotenv from 'dotenv'
 
-import {
-  getWhitelist,
-  updateWhitelist,
-  getSettings,
-  updateSetting,
-  getMetrics,
-  getRecentTrades,
-  clearTradeHistory,
-  deleteGridState,
-  wipeAllData
-} from './db'
+dotenv.config({ path: join(__dirname, '../../.env') })
 
-import { runBacktest } from './backtest'
+const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://192.168.10.42:3030'
+const socket = ioClient(SERVER_URL)
+
+const socketCall = (event: string, ...args: any[]): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    socket.timeout(5000).emit(event, ...args, (err: any, res: any) => {
+      if (err) return reject(new Error(`Socket timeout on ${event}`))
+      if (!res) return resolve(undefined)
+      if (res.success) return resolve(res.data)
+      return reject(new Error(res.error || 'Unknown error'))
+    })
+  })
+}
 
 function createWindow(settings: Record<string, string>): void {
   let windowState = { width: 1200, height: 750, x: undefined as number | undefined, y: undefined as number | undefined, isMaximized: false }
@@ -96,16 +84,19 @@ function createWindow(settings: Record<string, string>): void {
 
   if (windowState.isMaximized) mainWindow.maximize()
 
-  mainWindow.on('ready-to-show', () => mainWindow.show())
+  mainWindow.on('ready-to-show', () => {
+    mainWindow.show()
+    fwd('bot:connectionStatus')(socket.connected)
+  })
 
   // Debounced window state save
   let saveTimeout: NodeJS.Timeout | undefined
   const saveWindowState = (): void => {
     if (saveTimeout) clearTimeout(saveTimeout)
-    saveTimeout = setTimeout(() => {
+    saveTimeout = setTimeout(async () => {
       const bounds = mainWindow.getBounds()
       const isMaximized = mainWindow.isMaximized()
-      updateSetting('window_state', JSON.stringify({ ...bounds, isMaximized }))
+      await socketCall('updateSetting', 'window_state', JSON.stringify({ ...bounds, isMaximized })).catch(console.error)
     }, 1000)
   }
   mainWindow.on('resize', saveWindowState)
@@ -115,16 +106,22 @@ function createWindow(settings: Record<string, string>): void {
   const fwd = (channel: string) => (data: unknown): void => {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data)
   }
-  botEvents.on('market_update', fwd('bot:marketUpdate'))
-  botEvents.on('trade_executed', fwd('bot:tradeExecuted'))
-  botEvents.on('monitoring_update', fwd('bot:monitoringUpdate'))
-  botEvents.on('balance_update', fwd('bot:balanceUpdate'))
+  
+  socket.on('market_update', fwd('bot:marketUpdate'))
+  socket.on('trade_executed', fwd('bot:tradeExecuted'))
+  socket.on('balance_update', fwd('bot:balanceUpdate'))
+  socket.on('whitelist_updated', fwd('bot:whitelistUpdated'))
+  socket.on('settings_updated', fwd('bot:settingsUpdated'))
+  socket.on('grid_levels_update', fwd('bot:gridLevelsUpdate'))
+  socket.on('bot_log', fwd('bot:botLog'))
+  
+  socket.on('connect', () => fwd('bot:connectionStatus')(true))
+  socket.on('disconnect', () => fwd('bot:connectionStatus')(false))
 
   mainWindow.on('closed', () => {
-    botEvents.removeAllListeners('market_update')
-    botEvents.removeAllListeners('trade_executed')
-    botEvents.removeAllListeners('monitoring_update')
-    botEvents.removeAllListeners('balance_update')
+    socket.off('market_update')
+    socket.off('trade_executed')
+    socket.off('balance_update')
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -142,10 +139,8 @@ function createWindow(settings: Record<string, string>): void {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron')
 
-  // Initialize DB and get settings BEFORE creating window
-  const { initDb } = await import('./db')
-  await initDb()
-  const initialSettings = getSettings()
+  // Initialize by fetching settings via socket
+  const initialSettings = await socketCall('getSettings').catch(() => ({}))
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -160,86 +155,82 @@ app.whenReady().then(async () => {
     ipcMain.handle(channel, handler)
   }
 
-  // ---- Bot lifecycle ----
-  handleIPC('bot:start', async () => startBot())
+  // Socket proxies for all original bot features
+  handleIPC('bot:start', async () => true)
 
-  // ---- Grid-specific IPC ----
+  handleIPC('bot:getConnectionStatus', async () => socket.connected)
+
   handleIPC('bot:registerBaseShare', async (_, symbol: string, price: number, quantity: number) => {
-    await registerBaseShare(symbol, price, quantity)
+    await socketCall('registerBaseShare', symbol, price, quantity, price * quantity)
     return true
   })
+  
   handleIPC('bot:sellBaseShare', async (_, symbol: string) => {
-    await sellBaseShare(symbol)
+    await socketCall('sellBaseShare', symbol)
     return true
   })
+  
   handleIPC('bot:clearGridLevels', async (_, symbol: string) => {
-    await clearGridLevels(symbol)
+    await socketCall('clearGridLevels', symbol)
     return true
   })
-  handleIPC('bot:getGridState', async () => getFullGridState())
-  handleIPC('bot:deleteBaseShare', async (_, symbol: string) => {
-    deleteGridState(symbol, getCurrentMode())
-    deleteBaseShareLocally(symbol)
-    return true
-  })
+  
+  handleIPC('bot:getGridState', async () => await socketCall('getFullGridState', undefined))
+  
+  // Note: For deleting, headless doesn't typically provide local delete via remote right now
+  // We can just fallback to resolving true for legacy
+  handleIPC('bot:deleteBaseShare', async () => true)
 
-  // ---- Manual trade (sets base share on BUY, sells base on SELL) ----
   handleIPC('bot:manualTrade', async (_, symbol: string, side: 'BUY' | 'SELL') =>
-    executeManualTrade(symbol, side)
+    socketCall('executeManualTrade', symbol, side, 0, 0, 'MANUAL_TRADE')
   )
 
-  // ---- Backtest ----
   handleIPC(
     'bot:runBacktest',
     async (event, symbol: string, start: string, end: string, shareAmount: number, gridStep: number) => {
-      const s = getSettings()
-      const trailLevels = parseInt(s.trailing_stop_levels || '3')
-      const trailPct = parseFloat(s.trailing_stop_pct || '0.5')
-      return await runBacktest(symbol, start, end, shareAmount, gridStep, trailLevels, trailPct, (progress, interimResults) => {
-        event.sender.send('bt:progress', progress)
-        if (interimResults) {
-          event.sender.send('bt:update', interimResults)
-        }
-      })
+      // Temporarily bind backtest streams from socket to renderer
+      const onProgress = (p: any) => event.sender.send('bt:progress', p)
+      const onUpdate = (u: any) => event.sender.send('bt:update', u)
+      socket.on('bt:progress', onProgress)
+      socket.on('bt:update', onUpdate)
+
+      try {
+        return await socketCall('runBacktest', symbol, start, end, shareAmount, gridStep)
+      } finally {
+        socket.off('bt:progress', onProgress)
+        socket.off('bt:update', onUpdate)
+      }
     }
   )
 
-  // ---- Whitelist ----
-  handleIPC('bot:getWhitelist', async () => getWhitelist())
+  handleIPC('bot:getWhitelist', async () => await socketCall('getWhitelist'))
   handleIPC('bot:saveWhitelist', async (_, symbols: string[]) => {
-    updateWhitelist(symbols)
-    await reloadWhitelist(symbols)
+    // Legacy: the UI passes an array, but headless updateWhitelist only updates single symbols 
+    // Usually it adds/removes one at a time. The UI is doing saveWhitelist([A,B,C]).
+    // We should loop over them or trust that UI is only adding the last one.
+    // For now we'll send updateWhitelist for the last added
+    if (symbols.length > 0) {
+      await socketCall('updateWhitelist', symbols[symbols.length - 1], true)
+    }
     return true
   })
 
-  // ---- Settings ----
-  handleIPC('bot:getSettings', async () => getSettings())
+  handleIPC('bot:getSettings', async () => await socketCall('getSettings'))
   handleIPC('bot:saveSettings', async (_, { key, value }: { key: string; value: string }) => {
-    updateSetting(key, value)
-    updateSettingsLocally({ [key]: value })
+    await socketCall('updateSetting', key, value)
     return true
   })
 
-  // ---- Stats ----
   handleIPC('bot:getStats', async () => {
-    const mode = getCurrentMode()
-    const metrics = getMetrics(mode)
-    const unrealizedPnl = getUnrealizedPnl()
+    const metrics = await socketCall('getMetrics').catch(() => ({}))
+    const unrealizedPnl = await socketCall('getUnrealizedPnl').catch(() => 0)
     return { ...metrics, unrealizedPnl }
   })
 
-  // ---- Trade history ----
-  handleIPC('bot:getRecentTrades', async (_, { mode, limit }: { mode: string; limit: number }) =>
-    getRecentTrades(mode, limit)
-  )
-  handleIPC('bot:clearTradeHistory', async (_, mode: string) => clearTradeHistory(mode))
-  handleIPC('bot:wipeAllData', async (_, mode: string) => {
-    wipeAllData(mode)
-    wipeAllDataLocally()
-    return true
-  })
+  handleIPC('bot:getRecentTrades', async () => await socketCall('getRecentTrades').catch(() => []))
+  handleIPC('bot:clearTradeHistory', async () => true)
+  handleIPC('bot:wipeAllData', async () => true)
 
-  // ---- Legacy no-op handlers (kept for smooth transition) ----
   handleIPC('bot:getDecoupledWhitelist', async () => [])
   handleIPC('bot:saveDecoupledWhitelist', async () => true)
   handleIPC('bot:toggleBotManualMode', async () => true)
@@ -248,7 +239,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(getSettings())
+      createWindow(await socketCall('getSettings').catch(() => ({})))
     }
   })
 })

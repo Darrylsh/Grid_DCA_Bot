@@ -137,6 +137,7 @@ export default function App() {
   const [btStatus, setBtStatus] = useState('')
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
     if (toast) {
@@ -150,6 +151,8 @@ export default function App() {
     let statsInterval: any
     let tickTimer: any
     if (window.api) {
+      window.api.getConnectionStatus?.().then((status: boolean) => setIsConnected(status))
+      window.api.onConnectionStatus?.((status: boolean) => setIsConnected(status))
       window.api.onMarketUpdate((data) => {
         setMarketData((prev) => ({ ...prev, [data.symbol]: data }))
         if (data.botStartTime) setBotStartTime(data.botStartTime)
@@ -301,9 +304,14 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full bg-slate-900 text-slate-100 overflow-hidden font-sans">
+      {!isConnected && (
+        <div className="absolute top-0 left-0 w-full bg-rose-600 font-bold text-white text-center text-xs py-1.5 z-50 shadow-lg shadow-rose-900/50 flex items-center justify-center gap-2 animate-pulse">
+          <Activity size={14} /> DISCONNECTED FROM HEADLESS SERVER (192.168.10.42:3030) — Dashboard out of sync. Action buttons are disabled.
+        </div>
+      )}
       {/* Sidebar */}
-      <aside className="w-72 bg-slate-800/50 backdrop-blur-md border-r border-slate-700/50 flex flex-col p-4 shadow-xl">
-        <div className="flex items-center gap-3 mb-8">
+      <aside className={`w-72 bg-slate-800/50 backdrop-blur-md border-r border-slate-700/50 flex flex-col p-4 shadow-xl ${!isConnected ? 'opacity-50 pointer-events-none' : ''}`}>
+        <div className="flex items-center gap-3 mb-8 mt-4">
           <div className="p-2 bg-indigo-500/20 rounded-lg text-white"><RobotIcon size={24} /></div>
           <div>
             <h1 className="font-bold text-lg tracking-tight">Grid DCA Bot</h1>
@@ -378,8 +386,8 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-900 p-8 overflow-y-auto">
-        <header className="flex justify-between items-center mb-8">
+      <main className={`flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-900 p-8 overflow-y-auto ${!isConnected ? 'opacity-80 pointer-events-none' : ''}`}>
+        <header className="flex justify-between items-center mb-8 mt-4">
           <div>
             <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400">
               {activeTab === 'dashboard' ? 'Grid DCA Dashboard' : activeTab === 'settings' ? 'Bot Configuration' : 'Backtest Research Lab'}

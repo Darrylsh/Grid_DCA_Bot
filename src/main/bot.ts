@@ -77,7 +77,7 @@ const lastPrices: Record<string, number> = {}
 let symbolFilters: Record<string, Filter> = {}
 
 // Balances
-const FEE_RATE = 0.001   // Standard fee: 0.1%
+export const FEE_RATE = 0.001   // Standard fee: 0.1%
 const LIVE_FEE_RATE = 0.00075 // BNB Discount: 0.075%
 export const balances: Record<string, number> = { USDT: 0, BNB: 0 }
 
@@ -277,7 +277,7 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
   const cost = buyFillPrice * quantity
 
   // Persist grid level to DB
-  const levelId = saveGridLevel({
+  const levelId = await saveGridLevel({
     symbol,
     mode: currentMode,
     buyPrice: buyFillPrice,
@@ -302,7 +302,7 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
   })
 
   // Log the buy trade
-  logTrade({
+  await logTrade({
     symbol,
     side: 'BUY',
     price: buyFillPrice,
@@ -340,7 +340,7 @@ const handleGridSellFill = async (
 
   console.log(`[GRID SELL FILLED] ${symbol}: Sold ${level.quantity.toFixed(6)} @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)} (${(roi * 100).toFixed(2)}%)`)
 
-  markGridLevelFilled(level.id)
+  await markGridLevelFilled(level.id)
 
   // Remove from in-memory
   if (gridLevels[symbol]) {
@@ -353,7 +353,7 @@ const handleGridSellFill = async (
     botEvents.emit('balance_update', { ...balances })
   }
 
-  logTrade({
+  await logTrade({
     symbol,
     side: 'SELL',
     price: fillPrice,
@@ -381,7 +381,7 @@ const handleGridSellFill = async (
 // ---------------------------------------------------------------------------
 // Core Price Tick Handler
 // ---------------------------------------------------------------------------
-const processTick = (symbol: string, currentPrice: number): void => {
+const processTick = async (symbol: string, currentPrice: number): Promise<void> => {
   lastPrices[symbol] = currentPrice
 
   const state = gridState[symbol]
@@ -458,7 +458,7 @@ const processTick = (symbol: string, currentPrice: number): void => {
     const oldBase = state.basePrice
     const newBase = currentPrice
     state.basePrice = newBase
-    saveGridState(symbol, state, currentMode)
+    await saveGridState(symbol, state, currentMode)
     console.log(`[GRID UP] ${symbol}: Base price moved from $${oldBase.toFixed(4)} → $${newBase.toFixed(4)} (+${gridStep}%). No trade.`)
     broadcastMarketUpdate(symbol, currentPrice)
     return
@@ -601,11 +601,11 @@ const registerBaseShare = async (
 
   const cost = fillPrice * fillQuantity
   gridState[symbol] = { basePrice: fillPrice, baseQuantity: fillQuantity, baseEntryCost: cost }
-  saveGridState(symbol, gridState[symbol], currentMode)
+  await saveGridState(symbol, gridState[symbol], currentMode)
 
   console.log(`[BASE SHARE] ${symbol}: Registered base share @ $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}, cost: $${cost.toFixed(2)}`)
 
-  logTrade({
+  await logTrade({
     symbol,
     side: 'BUY',
     price: fillPrice,
@@ -666,7 +666,7 @@ const sellBaseShare = async (symbol: string): Promise<void> => {
   const pnl = (fillPrice - state.baseEntryCost / state.baseQuantity) * state.baseQuantity
   const roi = (fillPrice - state.baseEntryCost / state.baseQuantity) / (state.baseEntryCost / state.baseQuantity)
 
-  logTrade({
+  await logTrade({
     symbol,
     side: 'SELL',
     price: fillPrice,
@@ -689,7 +689,7 @@ const sellBaseShare = async (symbol: string): Promise<void> => {
   })
 
   delete gridState[symbol]
-  deleteGridState(symbol, currentMode)
+  await deleteGridState(symbol, currentMode)
   console.log(`[BASE SHARE SOLD] ${symbol}: Sold @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)}`)
   broadcastMarketUpdate(symbol, fillPrice)
 }
@@ -740,7 +740,7 @@ const clearGridLevels = async (symbol: string): Promise<void> => {
       }
     }
   }
-  deleteAllGridLevels(symbol, currentMode)
+  await deleteAllGridLevels(symbol, currentMode)
   gridLevels[symbol] = []
   console.log(`[GRID] Cleared all grid levels for ${symbol}`)
   broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
@@ -959,31 +959,31 @@ const startOrderPolling = (): void => {
 let lastMessageTime = 0
 let watchdogInterval: NodeJS.Timeout | null = null
 
-const startWatchdog = (): void => {
+const startWatchdog = async (): Promise<void> => {
   if (watchdogInterval) clearInterval(watchdogInterval)
-  watchdogInterval = setInterval(() => {
+  watchdogInterval = setInterval(async () => {
     // Determine if we have anything to monitor
-    const currentWhitelist = getWhitelist()
+    const whitelist = await getWhitelist()
     const activeGridSymbols = Object.keys(gridState)
-    if (currentWhitelist.length === 0 && activeGridSymbols.length === 0) return
+    if (whitelist.length === 0 && activeGridSymbols.length === 0) return
 
     // If no message for 45 seconds, restart the stream
     const staleTime = Date.now() - lastMessageTime
     if (lastMessageTime > 0 && staleTime > 45_000) {
       console.warn(`[WATCHDOG] WebSocket stale (no message for ${Math.round(staleTime / 1000)}s). Restarting...`)
-      connectWebSocket()
+      await connectWebSocket()
     }
   }, 15_000)
 }
 
-const connectWebSocket = (): void => {
+const connectWebSocket = async (): Promise<void> => {
   streamGeneration += 1
   const currentGen = streamGeneration
 
-  const currentWhitelist = getWhitelist()
+  const whitelist = await getWhitelist()
   // Monitor all whitelisted symbols + any with active grid states
   const monitoringSet = new Set([
-    ...currentWhitelist,
+    ...whitelist,
     ...Object.keys(gridState)
   ])
   const monitoringList = Array.from(monitoringSet).filter(Boolean)
@@ -1011,7 +1011,7 @@ const connectWebSocket = (): void => {
           // 'p' is for trade/aggTrade, 'c' is for 24hrTicker
           const priceStr = parsed.c || parsed.p
           const price = parseFloat(priceStr)
-          if (!isNaN(price)) processTick(symbol, price)
+          if (!isNaN(price)) processTick(symbol, price).catch(console.error)
         }
       } catch { /* ignore */ }
     }
@@ -1045,7 +1045,7 @@ const reloadWhitelist = async (newSymbols: string[]): Promise<void> => {
   }
 
   await updateFilters()
-  connectWebSocket()
+  await connectWebSocket()
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,16 +1059,16 @@ const updateSettingsLocally = (newSettings: Record<string, string>): void => {
   if (oldMode !== currentMode) {
     console.log(`[BOT] Trading mode switched to: ${currentMode}`)
     // Reload grid state for new mode
-    loadBotState()
+    loadBotState().catch(console.error)
   }
 }
 
 // ---------------------------------------------------------------------------
 // Load Persisted State
 // ---------------------------------------------------------------------------
-const loadBotState = (): void => {
+const loadBotState = async (): Promise<void> => {
   // Load grid states for current mode
-  const savedStates = getGridState(currentMode)
+  const savedStates = await getGridState(currentMode)
   Object.assign(gridState, savedStates)
 
   // Clear any states from a different mode
@@ -1077,7 +1077,7 @@ const loadBotState = (): void => {
   }
 
   // Load active grid levels
-  const allLevels = getAllActiveGridLevels(currentMode)
+  const allLevels = await getAllActiveGridLevels(currentMode)
   for (const sym of Object.keys(gridLevels)) gridLevels[sym] = []
   allLevels.forEach((row: any) => {
     if (!gridLevels[row.symbol]) gridLevels[row.symbol] = []
@@ -1085,12 +1085,12 @@ const loadBotState = (): void => {
       id: row.id,
       symbol: row.symbol,
       mode: row.mode,
-      buyPrice: row.buy_price,
-      sellPrice: row.sell_price,
+      buyPrice: row.buyPrice,
+      sellPrice: row.sellPrice,
       quantity: row.quantity,
       cost: row.cost,
       status: 'PENDING_SELL',
-      binanceSellOrderId: row.binance_sell_order_id
+      binanceSellOrderId: row.binanceSellOrderId
     })
   })
 
@@ -1184,11 +1184,11 @@ export const startBot = async (): Promise<void> => {
 
   await initDb()
 
-  const settings = getSettings()
+  const settings = await getSettings()
   Object.assign(currentSettings, settings)
   currentMode = currentSettings.trading_mode || 'LIVE'
 
-  currentWhitelist = getWhitelist()
+  currentWhitelist = await getWhitelist()
   console.log(`[BOT] Whitelist: ${currentWhitelist.join(', ')}`)
   console.log(`[BOT] Mode: ${currentMode}, Share: $${getShareAmount()}, Grid Step: ${getGridStep()}%`)
 
