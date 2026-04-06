@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
+import { sendTelegramMessage } from './telegram';
 
 import {
   botEvents,
@@ -27,6 +28,7 @@ import {
   updateSetting,
   getMetrics,
   getRecentTrades,
+  getTradesByTimeRange,
   clearTradeHistory,
   wipeAllData
 } from './db';
@@ -96,6 +98,17 @@ async function startHeadless() {
         if (typeof callback === 'function') callback({ success: true, data: t }); 
       }
       catch (err: any) { if (typeof callback === 'function') callback({ success: false, error: err.message }); }
+    });
+
+    socket.on('getTradesByTimeRange', async (...args) => {
+      const callback = args.pop();
+      const [mode, startMs, endMs] = args;
+      try {
+        const t = await getTradesByTimeRange(mode, startMs, endMs);
+        if (typeof callback === 'function') callback({ success: true, data: t });
+      } catch (err: any) {
+        if (typeof callback === 'function') callback({ success: false, error: err.message });
+      }
     });
 
     socket.on('getFullGridState', async (...args) => {
@@ -200,6 +213,9 @@ async function startHeadless() {
 
   server.listen(PORT, '0.0.0.0', async () => {
     console.log(`Headless server listening on 0.0.0.0:${PORT}`);
+    // Send Telegram startup notification
+    sendTelegramMessage(`🚀 Algobot Online\nHeadless server successfully started and listening on port ${PORT}.`);
+    
     // Start bot logic
     await startBot();
   });

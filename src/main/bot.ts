@@ -21,6 +21,7 @@ import {
   markGridLevelFilled,
   deleteAllGridLevels
 } from './db'
+import { sendTelegramMessage } from './telegram'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,6 +105,11 @@ const LEVEL_COOLDOWN_MS = 5000 // 5 second cooldown after a grid purchase
 // Trailing stop state (in-memory; resets on restart, re-arms automatically if still N levels up)
 const trailingStops: Record<string, TrailingStop> = {}
 
+// Telegram Notification Cooldowns
+let lastLowBnbNotified = 0
+let lastLowUsdtNotified = 0
+const missedBuyCooldowns: Record<string, number> = {}
+
 export const botEvents = new EventEmitter()
 
 // ---------------------------------------------------------------------------
@@ -183,6 +189,24 @@ const fetchBalances = async (): Promise<void> => {
     balances.USDT = parseFloat(usdt?.free || '0')
     balances.BNB = parseFloat(bnb?.free || '0')
     botEvents.emit('balance_update', { ...balances })
+
+    // Telegram Alerts for low balances (6 hour cooldown)
+    const now = Date.now()
+    const COOLDOWN_6H = 6 * 60 * 60 * 1000
+    if (balances.BNB < 0.015 && currentMode === 'LIVE') {
+      if (now - lastLowBnbNotified > COOLDOWN_6H) {
+        sendTelegramMessage(`⚠️ Low BNB Balance\nYour BNB is at ${balances.BNB.toFixed(4)}, which is less than 0.015. Please top up for fees!`)
+        lastLowBnbNotified = now
+      }
+    }
+
+    const shareAmt = getShareAmount()
+    if (balances.USDT < shareAmt && currentMode === 'LIVE') {
+      if (now - lastLowUsdtNotified > COOLDOWN_6H) {
+        sendTelegramMessage(`⚠️ Low USDT Balance\nYour USDT is at $${balances.USDT.toFixed(2)}, which is below your share size of $${shareAmt.toFixed(2)}.`)
+        lastLowUsdtNotified = now
+      }
+    }
   } catch (e: any) {
     console.error('[BALANCE] Failed to fetch balances:', e.message)
   }
@@ -198,6 +222,12 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
 
   if (currentMode === 'LIVE' && balances.USDT < shareAmount) {
     console.log(`[GRID] ${symbol}: Insufficient USDT (${balances.USDT.toFixed(2)} < ${shareAmount}). Skipping grid buy.`)
+    const now = Date.now()
+    const COOLDOWN_1H = 60 * 60 * 1000
+    if (now - (missedBuyCooldowns[symbol] || 0) > COOLDOWN_1H) {
+      sendTelegramMessage(`🚨 Missed Buy (${symbol})\nAttempted grid buy @ $${currentPrice.toFixed(4)}, but USDT balance is too low ($${balances.USDT.toFixed(2)} < $${shareAmount.toFixed(2)}).`)
+      missedBuyCooldowns[symbol] = now
+    }
     return
   }
 
@@ -433,7 +463,7 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
       if (currentPrice <= ts.stopPrice) {
         console.log(`[TRAIL] ${symbol}: STOP HIT @ $${currentPrice.toFixed(4)} (stop was $${ts.stopPrice.toFixed(4)}). Selling base share...`)
         delete trailingStops[symbol]
-        sellBaseShare(symbol).catch(console.error)
+        sellBaseShare(symbol, 'TRAIL_STOP_SELL').catch(console.error)
         return // sellBaseShare calls broadcastMarketUpdate internally
       }
     } else if (ts?.armed) {
@@ -633,7 +663,7 @@ const registerBaseShare = async (
 // ---------------------------------------------------------------------------
 // Sell Base Share (manual action)
 // ---------------------------------------------------------------------------
-const sellBaseShare = async (symbol: string): Promise<void> => {
+const sellBaseShare = async (symbol: string, reason: string = 'MANUAL_BASE_SELL'): Promise<void> => {
   const state = gridState[symbol]
   if (!state) {
     throw new Error(`No base share registered for ${symbol}`)
@@ -674,7 +704,7 @@ const sellBaseShare = async (symbol: string): Promise<void> => {
     pnl,
     roi,
     fee: fillPrice * state.baseQuantity * LIVE_FEE_RATE,
-    reason: 'MANUAL_BASE_SELL'
+    reason
   }, currentMode)
 
   botEvents.emit('trade_executed', {
@@ -684,7 +714,7 @@ const sellBaseShare = async (symbol: string): Promise<void> => {
     quantity: state.baseQuantity,
     pnl,
     roi,
-    reason: 'MANUAL_BASE_SELL',
+    reason,
     timestamp: Date.now()
   })
 
@@ -1226,6 +1256,24 @@ export const startBot = async (): Promise<void> => {
     }).join(' | ')
     console.log(`[MARKET PULSE] ${summary}`)
   }, 60_000))
+
+  // Telegram Notifications for Trades
+  botEvents.on('trade_executed', (data: any) => {
+    const sideStr = data.side === 'BUY' ? '🟢 BOUGHT' : '🔴 SOLD'
+    const icon = data.side === 'BUY' ? '🛒' : '💰'
+    
+    let msg = `${icon} ${sideStr} ${data.symbol}\n`
+    msg += `Price: $${data.price.toFixed(4)}\n`
+    msg += `Quantity: ${data.quantity.toFixed(6)}\n`
+    
+    if (data.side === 'SELL') {
+      msg += `Profit: $${data.pnl.toFixed(4)} (${(data.roi * 100).toFixed(2)}%)\n`
+    }
+    
+    msg += `Mode: ${currentMode} | Reason: ${data.reason}`
+    
+    sendTelegramMessage(msg)
+  })
 
   console.log('[BOT] Grid DCA Bot started.')
 }

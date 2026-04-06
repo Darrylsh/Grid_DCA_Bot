@@ -167,6 +167,16 @@ const getRecentTrades = async (mode = 'LIVE', limit = 50): Promise<any[]> => {
     .limit(limit);
 }
 
+const getTradesByTimeRange = async (mode = 'LIVE', startMs: number, endMs: number): Promise<any[]> => {
+  return await db.select()
+    .from(schema.trades)
+    .where(and(
+      eq(schema.trades.mode, mode),
+      sql`timestamp >= ${startMs} AND timestamp <= ${endMs}`
+    ))
+    .orderBy(asc(schema.trades.timestamp));
+}
+
 const clearTradeHistory = async (mode = 'LIVE'): Promise<boolean> => {
   await db.delete(schema.trades).where(eq(schema.trades.mode, mode));
   return true;
@@ -372,6 +382,7 @@ export {
   updateWhitelist,
   logTrade,
   getRecentTrades,
+  getTradesByTimeRange,
   clearTradeHistory,
   wipeAllData,
   getMetrics,

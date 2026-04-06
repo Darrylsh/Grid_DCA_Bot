@@ -1,6 +1,6 @@
 // @ts-nocheck
 // backtest.ts — Grid DCA Bot Backtest Engine
-// Uses 1-minute OHLCV candles, fetches from Binance and caches in SQLite.
+// Uses 1-minute OHLCV candles, fetches from Binance and caches in PostgreSQL.
 import { Spot } from '@binance/connector'
 import * as dotenv from 'dotenv'
 import * as path from 'path'
@@ -17,7 +17,7 @@ const client = apiKey ? new Spot(apiKey, apiSecret) : new Spot()
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch 1-minute Binance klines in pages of 1000 and store them in SQLite.
+ * Fetch 1-minute Binance klines in pages of 1000 and store them in PostgreSQL.
  * Skips any candles already in the cache.
  */
 const fetchAndCacheCandles = async (

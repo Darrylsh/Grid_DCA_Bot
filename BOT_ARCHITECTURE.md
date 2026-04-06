@@ -56,7 +56,7 @@ Whenever `bot.ts`, `db.ts`, or `headless-server.ts` are modified, follow exactly
 Do not assume these modules are complete. In upcoming iterations, refer to these targets:
 
 *   **Remote Backtesting Migration:** `src/main/backtest.ts` is still executed completely natively. It needs to be retrofitted to compile its data on the backend to skip gigantic localized db fetching.
-*   **Drizzle Cleanups:** Some remaining SQLite syntax residues / linting warnings persist across the schema mapping. 
+*   **Drizzle Cleanups:** Some remaining PostgreSQL syntax residues / linting warnings persist across the schema mapping. 
 *   **Audio Triggers:** `buy.mp3` and `sell.mp3` are currently fired contextually by the `App.tsx` loop.
 
 ---

@@ -16,7 +16,8 @@ import {
   Layers,
   CheckCircle,
   Shuffle,
-  Receipt
+  Receipt,
+  FileText
 } from 'lucide-react'
 import buySound from './assets/buy.mp3'
 import sellSound from './assets/sell.mp3'
@@ -135,6 +136,12 @@ export default function App() {
   const [btError, setBtError] = useState<string | null>(null)
   const [btProgress, setBtProgress] = useState(0)
   const [btStatus, setBtStatus] = useState('')
+
+  // Reports state
+  const [reportStart, setReportStart] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+  const [reportEnd, setReportEnd] = useState(new Date().toISOString().split('T')[0])
+  const [reportData, setReportData] = useState<any[]>([])
+  const [reportLoading, setReportLoading] = useState(false)
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [isConnected, setIsConnected] = useState(false)
@@ -288,6 +295,25 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (activeTab === 'reports') {
+      const fetchReports = async () => {
+        setReportLoading(true)
+        try {
+          const startMs = new Date(reportStart + 'T00:00:00.000Z').getTime()
+          const endMs = new Date(reportEnd + 'T23:59:59.999Z').getTime()
+          const trades = await window.api.getTradesByTimeRange(tradingMode, startMs, endMs)
+          setReportData(trades || [])
+        } catch (err) {
+          console.error('Failed to fetch reports', err)
+          setReportData([])
+        }
+        setReportLoading(false)
+      }
+      fetchReports()
+    }
+  }, [activeTab, reportStart, reportEnd, tradingMode])
+
   // Direct one-click market buy at configured capital allocation
   const handleSetBase = async (symbol: string) => {
     setRegisteringSymbol(symbol)
@@ -332,6 +358,7 @@ export default function App() {
           {[
             { id: 'dashboard', icon: BarChart2, label: 'Dashboard' },
             { id: 'settings', icon: Settings, label: 'Settings' },
+            { id: 'reports', icon: FileText, label: 'Reports' },
             { id: 'backtest', icon: Microscope, label: 'Backtest Lab' }
           ].map(({ id, icon: Icon, label }) => (
             <button key={id} onClick={() => setActiveTab(id)}
@@ -390,10 +417,10 @@ export default function App() {
         <header className="flex justify-between items-center mb-8 mt-4">
           <div>
             <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400">
-              {activeTab === 'dashboard' ? 'Grid DCA Dashboard' : activeTab === 'settings' ? 'Bot Configuration' : 'Backtest Research Lab'}
+              {activeTab === 'dashboard' ? 'Grid DCA Dashboard' : activeTab === 'settings' ? 'Bot Configuration' : activeTab === 'reports' ? 'Performance Reports' : 'Backtest Research Lab'}
             </h2>
             <p className="text-slate-400 text-sm mt-1">
-              {activeTab === 'dashboard' ? 'Live grid monitoring — buy shares on dips, sell at profit targets' : activeTab === 'settings' ? 'Configure grid parameters and trading options' : 'Simulate grid strategy against historical 1-minute candle data'}
+              {activeTab === 'dashboard' ? 'Live grid monitoring — buy shares on dips, sell at profit targets' : activeTab === 'settings' ? 'Configure grid parameters and trading options' : activeTab === 'reports' ? 'Analyze executed trades and realized profit over time' : 'Simulate grid strategy against historical 1-minute candle data'}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -774,6 +801,106 @@ export default function App() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* REPORTS TAB                                                      */}
+          {/* ================================================================ */}
+          {activeTab === 'reports' && (
+            <div className="max-w-4xl bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl shadow-2xl flex flex-col overflow-hidden h-full">
+              <div className="p-6 border-b border-slate-700/50 bg-slate-800/60 flex items-center justify-between shadow-sm">
+                <h3 className="text-xl font-bold flex items-center gap-2">
+                  <FileText className="text-indigo-400" /> PnL Report ({tradingMode})
+                </h3>
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Start Date</span>
+                    <input
+                      type="date"
+                      value={reportStart}
+                      onChange={(e) => setReportStart(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                      style={{ colorScheme: 'dark' }}
+                    />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">End Date</span>
+                    <input
+                      type="date"
+                      value={reportEnd}
+                      onChange={(e) => setReportEnd(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                      style={{ colorScheme: 'dark' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                {reportLoading ? (
+                  <div className="flex justify-center items-center h-48">
+                    <Activity className="animate-spin text-indigo-400" size={32} />
+                  </div>
+                ) : (
+                  <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl overflow-hidden shadow-inner">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-800/80 text-slate-300 text-xs uppercase tracking-wider border-b border-slate-700/50">
+                        <tr>
+                          <th className="px-6 py-4">Symbol</th>
+                          <th className="px-6 py-4 text-right">Winning Sells</th>
+                          <th className="px-6 py-4 text-right">Losing Sells</th>
+                          <th className="px-6 py-4 text-right">Realized PnL</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/30">
+                        {(() => {
+                          const summary: Record<string, { wins: number, losses: number, pnl: number }> = {}
+                          reportData.forEach((t) => {
+                            if (t.side === 'SELL') {
+                              if (!summary[t.symbol]) summary[t.symbol] = { wins: 0, losses: 0, pnl: 0 }
+                              summary[t.symbol].pnl += Number(t.pnl)
+                              if (t.pnl > 0) summary[t.symbol].wins++
+                              else if (t.pnl < 0) summary[t.symbol].losses++
+                            }
+                          })
+                          const rows = Object.entries(summary).sort((a, b) => b[1].pnl - a[1].pnl)
+                          const totalPnl = rows.reduce((acc, row) => acc + row[1].pnl, 0)
+                          
+                          if (rows.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={4} className="px-6 py-8 text-center text-slate-500 italic">No sell trades recorded in this period.</td>
+                              </tr>
+                            )
+                          }
+
+                          return (
+                            <>
+                              {rows.map(([sym, data]) => (
+                                <tr key={sym} className="hover:bg-slate-800/30 transition-colors">
+                                  <td className="px-6 py-4 font-mono font-bold text-slate-200">{stripUSDT(sym)}</td>
+                                  <td className="px-6 py-4 text-right text-emerald-400 font-medium">{data.wins}</td>
+                                  <td className="px-6 py-4 text-right text-rose-400 font-medium">{data.losses}</td>
+                                  <td className={`px-6 py-4 text-right font-bold ${data.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    ${data.pnl.toFixed(2)}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="bg-slate-800/50 border-t-2 border-slate-700">
+                                <td className="px-6 py-4 font-bold text-slate-200" colSpan={3}>TOTAL REALIZED PNL</td>
+                                <td className={`px-6 py-4 text-right font-bold text-lg ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  ${totalPnl.toFixed(2)}
+                                </td>
+                              </tr>
+                            </>
+                          )
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

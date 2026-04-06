@@ -228,6 +228,9 @@ app.whenReady().then(async () => {
   })
 
   handleIPC('bot:getRecentTrades', async () => await socketCall('getRecentTrades').catch(() => []))
+  handleIPC('bot:getTradesByTimeRange', async (_, mode: string, startMs: number, endMs: number) => {
+    return await socketCall('getTradesByTimeRange', mode, startMs, endMs).catch(() => [])
+  })
   handleIPC('bot:clearTradeHistory', async () => true)
   handleIPC('bot:wipeAllData', async () => true)
 

@@ -66,6 +66,7 @@ export interface IElectronAPI {
 
   // Trade history
   getRecentTrades: (args: { mode: string; limit: number }) => Promise<any[]>
+  getTradesByTimeRange: (mode: string, startMs: number, endMs: number) => Promise<any[]>
   clearTradeHistory: (mode: string) => Promise<boolean>
   wipeAllData: (mode: string) => Promise<boolean>
 

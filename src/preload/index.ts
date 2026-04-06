@@ -46,10 +46,10 @@ const api = {
 
   // ---- Stats ----
   getStats: () => ipcRenderer.invoke('bot:getStats'),
-
-  // ---- Trade history ----
-  getRecentTrades: (args: { mode: string; limit: number }) =>
-    ipcRenderer.invoke('bot:getRecentTrades', args),
+  getRecentTrades: (payload: { mode: string; limit: number }) =>
+    ipcRenderer.invoke('bot:getRecentTrades', payload),
+  getTradesByTimeRange: (mode: string, startMs: number, endMs: number) =>
+    ipcRenderer.invoke('bot:getTradesByTimeRange', mode, startMs, endMs),
   clearTradeHistory: (mode: string) => ipcRenderer.invoke('bot:clearTradeHistory', mode),
   wipeAllData: (mode: string) => ipcRenderer.invoke('bot:wipeAllData', mode),
 
