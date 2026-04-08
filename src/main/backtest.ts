@@ -1,12 +1,17 @@
-// @ts-nocheck
 // backtest.ts — Grid DCA Bot Backtest Engine
 // Uses 1-minute OHLCV candles, fetches from Binance and caches in PostgreSQL.
 import { Spot } from '@binance/connector'
 import * as dotenv from 'dotenv'
 import * as path from 'path'
 dotenv.config({ path: path.join(__dirname, '../../.env') })
+import type { BacktestResults, BacktestTrade, BacktestGridLevel, Trade } from '../shared/types'
 
-import { saveCandleBatch, getCachedCandles, getEarliestCachedCandle, getLatestCachedCandle } from './db'
+import {
+  saveCandleBatch,
+  getCachedCandles,
+  getEarliestCachedCandle,
+  getLatestCachedCandle
+} from './db'
 
 const apiKey = process.env['BINANCE_API_KEY']
 const apiSecret = process.env['BINANCE_API_SECRET']
@@ -60,12 +65,17 @@ const fetchAndCacheCandles = async (
       const lastCandle = klines[klines.length - 1]
       cursor = lastCandle[0] + ONE_MIN_MS
 
-      onProgress?.(`Fetching ${symbol}: ${totalFetched} candles (${new Date(cursor).toLocaleDateString()})`)
+      onProgress?.(
+        `Fetching ${symbol}: ${totalFetched} candles (${new Date(cursor).toLocaleDateString()})`
+      )
 
       // Throttle slightly to avoid Binance rate limits
       await new Promise((r) => setTimeout(r, 100))
-    } catch (e: any) {
-      console.error(`[BACKTEST] Failed to fetch candles for ${symbol}:`, e.message)
+    } catch (e: unknown) {
+      console.error(
+        `[BACKTEST] Failed to fetch candles for ${symbol}:`,
+        e instanceof Error ? e.message : String(e)
+      )
       break
     }
   }
@@ -136,8 +146,11 @@ export async function runBacktest(
   gridStepPercent: number,
   trailingStopLevels = 3,
   trailingStopPct = 0.5,
-  onUpdate?: (progress: number, results: any) => void
-): Promise<any> {
+  onUpdate?: (
+    progress: number,
+    results: BacktestResults | { status: string; message?: string }
+  ) => void
+): Promise<BacktestResults> {
   const gridStep = (gridStepPercent ?? 3) / 100
   // Per user's design: fixed amount = one share cost
   const shareCost = initialEquity // The initial equity IS the share amount
@@ -156,51 +169,86 @@ export async function runBacktest(
 
   const candles = await getCachedCandles(symbol, startMs, endMs)
   if (!candles || candles.length === 0) {
-    return { error: `No candle data found for ${symbol} in the selected range.` }
+    const errorResult: BacktestResults = {
+      symbol,
+      gridStep: gridStepPercent,
+      shareAmount: initialEquity,
+      totalSpent: 0,
+      totalRecovered: 0,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      totalPnl: 0,
+      totalFees: 0,
+      totalRoi: 0,
+      finalEquity: initialEquity,
+      gridLevelCount: 0,
+      totalTrades: 0,
+      pendingLevels: 0,
+      winRate: 0,
+      chartData: [],
+      trades: [],
+      error: `No candle data found for ${symbol} in the selected range.`
+    }
+    onUpdate?.(100, errorResult)
+    return errorResult
   }
 
   console.log(`[BACKTEST] Running simulation on ${candles.length} 1m candles...`)
 
   // ---- 2. Initialize simulation state ----
-  let totalSpent = 0       // Total USDT invested (all buys)
-  let totalRecovered = 0   // Total USDT recovered from sells (net of sell fee)
-  let realizedCost = 0     // Cost of ONLY the levels that have actually been sold
-  const FEE_RATE = 0.001   // 0.1% Binance fee (each side)
+  let totalSpent = 0 // Total USDT invested (all buys)
+  let totalRecovered = 0 // Total USDT recovered from sells (net of sell fee)
+  let realizedCost = 0 // Cost of ONLY the levels that have actually been sold
+  const FEE_RATE = 0.001 // 0.1% Binance fee (each side)
 
   // Base share: bought at open of first candle
   const firstCandle = candles[0]
   const baseEntryPrice = firstCandle.open
-  let baseQty = shareCost / baseEntryPrice * (1 - FEE_RATE)
+  let baseQty = (shareCost / baseEntryPrice) * (1 - FEE_RATE)
   const baseCost = shareCost
   totalSpent += shareCost
 
   let basePrice = baseEntryPrice // Reference price (moves up)
-  const trades: any[] = [{
-    side: 'BUY',
-    price: baseEntryPrice,
-    quantity: baseQty,
-    cost: baseCost,
-    fee: baseCost * FEE_RATE,
-    timestamp: new Date(firstCandle.openTime).toISOString(),
-    reason: 'BASE_SHARE',
-    pnl: null,
-    roi: null
-  }]
+  const trades: BacktestTrade[] = [
+    {
+      side: 'BUY',
+      price: baseEntryPrice,
+      quantity: baseQty,
+      cost: baseCost,
+      fee: baseCost * FEE_RATE,
+      timestamp: new Date(firstCandle.openTime).toISOString(),
+      reason: 'BASE_SHARE',
+      pnl: null,
+      roi: null
+    }
+  ]
 
   // Grid levels: { id, buyPrice, sellPrice, qty, cost, status }
   let nextLevelId = 1
-  const pendingLevels: any[] = []
+  const pendingLevels: BacktestGridLevel[] = []
   let gridLevelCount = 0
   let totalFeesPaid = baseCost * FEE_RATE
 
   // Trailing stop state (mirrors live bot)
-  const stopDistance = gridStep * trailingStopPct  // e.g. 2% * 0.5 = 0.01
+  const stopDistance = gridStep * trailingStopPct // e.g. 2% * 0.5 = 0.01
   let trailArmed = false
   let trailHigh = 0
   let trailStopPrice = 0
   let baseSoldByTrail = false
 
   const chartData: { t: number; p: number }[] = []
+  // Helper to convert BacktestTrade[] to Trade[]
+  const mapTrades = (trades: BacktestTrade[]): Trade[] =>
+    trades.map((t) => ({
+      timestamp: Date.parse(t.timestamp),
+      symbol,
+      side: t.side,
+      price: t.price,
+      quantity: t.quantity,
+      reason: t.reason,
+      pnl: t.pnl ?? undefined,
+      fees: t.fee
+    }))
   const totalCandles = candles.length
   const CHART_SAMPLE = Math.max(1, Math.floor(totalCandles / 1500))
   let lastChartSample = 0
@@ -274,11 +322,11 @@ export async function runBacktest(
         const fee = proceeds * FEE_RATE
         // grossPnl: sell proceeds minus what we spent to buy (buy fee already baked into qty)
         const grossPnl = proceeds - level.cost
-        const netPnl = grossPnl - fee  // only deduct sell-side fee here
+        const netPnl = grossPnl - fee // only deduct sell-side fee here
         const roi = (fillPrice - level.buyPrice) / level.buyPrice
 
         totalRecovered += proceeds - fee
-        realizedCost += level.cost  // track cost of completed (sold) levels only
+        realizedCost += level.cost // track cost of completed (sold) levels only
         totalFeesPaid += fee
 
         trades.push({
@@ -300,12 +348,9 @@ export async function runBacktest(
 
     // ---- Determine the reference price for next buy trigger ----
     // Next buy triggers at gridStep% below the lowest of: basePrice, lowest pending level buy price
-    const lowestLevelBuy = pendingLevels.length > 0
-      ? Math.min(...pendingLevels.map((l) => l.buyPrice))
-      : null
-    const referencePrice = lowestLevelBuy !== null
-      ? Math.min(basePrice, lowestLevelBuy)
-      : basePrice
+    const lowestLevelBuy =
+      pendingLevels.length > 0 ? Math.min(...pendingLevels.map((l) => l.buyPrice)) : null
+    const referencePrice = lowestLevelBuy !== null ? Math.min(basePrice, lowestLevelBuy) : basePrice
     const nextBuyTrigger = referencePrice * (1 - gridStep)
 
     // ---- Check UP: base price steps up in discrete gridStep increments ----
@@ -357,15 +402,17 @@ export async function runBacktest(
       lastProgressReport = progress
 
       const currentPrice = close
-    const unrealizedBase = baseSoldByTrail ? 0 : (currentPrice - baseEntryPrice) * baseQty
+      const unrealizedBase = baseSoldByTrail ? 0 : (currentPrice - baseEntryPrice) * baseQty
       const unrealizedLevels = pendingLevels.reduce(
-        (sum, l) => sum + (currentPrice - l.buyPrice) * l.qty, 0
+        (sum, l) => sum + (currentPrice - l.buyPrice) * l.qty,
+        0
       )
       const totalUnrealized = unrealizedBase + unrealizedLevels
       // Realized PnL = profit from completed sells only (never negative if sells are at +gridStep%)
       const realizedPnl = totalRecovered - realizedCost
       const sellTrades = trades.filter((t) => t.side === 'SELL')
 
+      const winTrades = sellTrades.filter((t) => t.pnl !== null && t.pnl > 0)
       onUpdate(progress, {
         symbol,
         gridStep: gridStepPercent,
@@ -379,19 +426,17 @@ export async function runBacktest(
         unrealizedPnl: totalUnrealized,
         totalFees: totalFeesPaid,
         totalPnl: realizedPnl + totalUnrealized,
-        trades: [...trades],
+        trades: mapTrades(trades),
         chartData: [...chartData],
         finalEquity: shareCost + realizedPnl + totalUnrealized,
         totalRoi: (realizedPnl + totalUnrealized) / shareCost,
-        winRate: sellTrades.length > 0
-          ? (sellTrades.filter((t) => t.pnl > 0).length / sellTrades.length) * 100
-          : 0,
+        winRate: sellTrades.length > 0 ? (winTrades.length / sellTrades.length) * 100 : 0,
         range: {
           start: new Date(candles[0].openTime).toISOString(),
           end: new Date(candle.openTime).toISOString(),
           candlesProcessed: i + 1
         }
-      })
+      } as BacktestResults)
     }
   }
 
@@ -403,15 +448,16 @@ export async function runBacktest(
   const finalPrice = lastCandle.close
   const unrealizedBase = baseSoldByTrail ? 0 : (finalPrice - baseEntryPrice) * baseQty
   const unrealizedLevels = pendingLevels.reduce(
-    (sum, l) => sum + (finalPrice - l.buyPrice) * l.qty, 0
+    (sum, l) => sum + (finalPrice - l.buyPrice) * l.qty,
+    0
   )
   const totalUnrealized = unrealizedBase + unrealizedLevels
   // Realized PnL = profit from completed sells only (never negative if sells are at +gridStep%)
   const realizedPnl = totalRecovered - realizedCost
   const sellTrades = trades.filter((t) => t.side === 'SELL')
-  const winTrades = sellTrades.filter((t) => t.pnl > 0)
+  const winTrades = sellTrades.filter((t) => t.pnl !== null && t.pnl > 0)
 
-  const results = {
+  const results: BacktestResults = {
     symbol,
     gridStep: gridStepPercent,
     shareAmount: shareCost,
@@ -427,7 +473,7 @@ export async function runBacktest(
     finalEquity: shareCost + realizedPnl + totalUnrealized,
     totalRoi: (realizedPnl + totalUnrealized) / shareCost,
     winRate: sellTrades.length > 0 ? (winTrades.length / sellTrades.length) * 100 : 0,
-    trades,
+    trades: mapTrades(trades),
     chartData,
     range: {
       start: new Date(candles[0].openTime).toISOString(),

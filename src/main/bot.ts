@@ -27,9 +27,9 @@ import { sendTelegramMessage } from './telegram'
 // Types
 // ---------------------------------------------------------------------------
 interface GridState {
-  basePrice: number       // Reference price for 3% up/down calculation
-  baseQuantity: number    // Coin quantity of the base share
-  baseEntryCost: number   // USDT cost of the base share
+  basePrice: number // Reference price for 3% up/down calculation
+  baseQuantity: number // Coin quantity of the base share
+  baseEntryCost: number // USDT cost of the base share
 }
 
 interface GridLevel {
@@ -51,8 +51,8 @@ interface Filter {
 
 interface TrailingStop {
   armed: boolean
-  trailHigh: number    // highest price seen since arming
-  stopPrice: number    // trailHigh * (1 - stopPct)
+  trailHigh: number // highest price seen since arming
+  stopPrice: number // trailHigh * (1 - stopPct)
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ const lastPrices: Record<string, number> = {}
 let symbolFilters: Record<string, Filter> = {}
 
 // Balances
-export const FEE_RATE = 0.001   // Standard fee: 0.1%
+export const FEE_RATE = 0.001 // Standard fee: 0.1%
 const LIVE_FEE_RATE = 0.00075 // BNB Discount: 0.075%
 export const balances: Record<string, number> = { USDT: 0, BNB: 0 }
 
@@ -145,7 +145,8 @@ const roundToStep = (value: number, step: number): number => {
 const roundTick = (value: number, tickSize: number, direction: 'up' | 'down' = 'down'): number => {
   if (!tickSize || tickSize === 0) return value
   const precision = tickSize.toString().split('.')[1]?.length || 0
-  if (direction === 'up') return parseFloat((Math.ceil(value / tickSize) * tickSize).toFixed(precision))
+  if (direction === 'up')
+    return parseFloat((Math.ceil(value / tickSize) * tickSize).toFixed(precision))
   return parseFloat((Math.floor(value / tickSize) * tickSize).toFixed(precision))
 }
 
@@ -158,7 +159,7 @@ const updateFilters = async (): Promise<void> => {
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('exchangeInfo timeout')), 10000)
     )
-    const response = await Promise.race([client.exchangeInfo(), timeout]) as any
+    const response = (await Promise.race([client.exchangeInfo(), timeout])) as any
     const filters: Record<string, Filter> = {}
     response.data.symbols.forEach((s: any) => {
       const lotSize = s.filters.find((f: any) => f.filterType === 'LOT_SIZE')
@@ -171,7 +172,9 @@ const updateFilters = async (): Promise<void> => {
       }
     })
     symbolFilters = filters
-    console.log(`[FILTERS] Updated exchange filters for ${Object.keys(symbolFilters).length} symbols.`)
+    console.log(
+      `[FILTERS] Updated exchange filters for ${Object.keys(symbolFilters).length} symbols.`
+    )
   } catch (e: any) {
     console.error('[FILTERS] Failed to update exchange filters:', e.message)
   }
@@ -183,7 +186,7 @@ const updateFilters = async (): Promise<void> => {
 const fetchBalances = async (): Promise<void> => {
   if (!apiKey || !apiSecret) return
   try {
-    const response = await client.account() as any
+    const response = (await client.account()) as any
     const usdt = response.data.balances.find((b: any) => b.asset === 'USDT')
     const bnb = response.data.balances.find((b: any) => b.asset === 'BNB')
     balances.USDT = parseFloat(usdt?.free || '0')
@@ -195,7 +198,9 @@ const fetchBalances = async (): Promise<void> => {
     const COOLDOWN_6H = 6 * 60 * 60 * 1000
     if (balances.BNB < 0.015 && currentMode === 'LIVE') {
       if (now - lastLowBnbNotified > COOLDOWN_6H) {
-        sendTelegramMessage(`⚠️ Low BNB Balance\nYour BNB is at ${balances.BNB.toFixed(4)}, which is less than 0.015. Please top up for fees!`)
+        sendTelegramMessage(
+          `⚠️ Low BNB Balance\nYour BNB is at ${balances.BNB.toFixed(4)}, which is less than 0.015. Please top up for fees!`
+        )
         lastLowBnbNotified = now
       }
     }
@@ -203,7 +208,9 @@ const fetchBalances = async (): Promise<void> => {
     const shareAmt = getShareAmount()
     if (balances.USDT < shareAmt && currentMode === 'LIVE') {
       if (now - lastLowUsdtNotified > COOLDOWN_6H) {
-        sendTelegramMessage(`⚠️ Low USDT Balance\nYour USDT is at $${balances.USDT.toFixed(2)}, which is below your share size of $${shareAmt.toFixed(2)}.`)
+        sendTelegramMessage(
+          `⚠️ Low USDT Balance\nYour USDT is at $${balances.USDT.toFixed(2)}, which is below your share size of $${shareAmt.toFixed(2)}.`
+        )
         lastLowUsdtNotified = now
       }
     }
@@ -221,11 +228,15 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
   const stepMultiplier = gridStep / 100
 
   if (currentMode === 'LIVE' && balances.USDT < shareAmount) {
-    console.log(`[GRID] ${symbol}: Insufficient USDT (${balances.USDT.toFixed(2)} < ${shareAmount}). Skipping grid buy.`)
+    console.log(
+      `[GRID] ${symbol}: Insufficient USDT (${balances.USDT.toFixed(2)} < ${shareAmount}). Skipping grid buy.`
+    )
     const now = Date.now()
     const COOLDOWN_1H = 60 * 60 * 1000
     if (now - (missedBuyCooldowns[symbol] || 0) > COOLDOWN_1H) {
-      sendTelegramMessage(`🚨 Missed Buy (${symbol})\nAttempted grid buy @ $${currentPrice.toFixed(4)}, but USDT balance is too low ($${balances.USDT.toFixed(2)} < $${shareAmount.toFixed(2)}).`)
+      sendTelegramMessage(
+        `🚨 Missed Buy (${symbol})\nAttempted grid buy @ $${currentPrice.toFixed(4)}, but USDT balance is too low ($${balances.USDT.toFixed(2)} < $${shareAmount.toFixed(2)}).`
+      )
       missedBuyCooldowns[symbol] = now
     }
     return
@@ -246,25 +257,32 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
     return
   }
 
-  console.log(`[GRID BUY] ${symbol}: Buying ${quantity.toFixed(6)} @ ~$${currentPrice.toFixed(4)}. Will sell @ $${sellLimitPrice.toFixed(4)} (+${gridStep}%)`)
+  console.log(
+    `[GRID BUY] ${symbol}: Buying ${quantity.toFixed(6)} @ ~$${currentPrice.toFixed(4)}. Will sell @ $${sellLimitPrice.toFixed(4)} (+${gridStep}%)`
+  )
 
   let binanceSellOrderId: string | undefined
 
   if (currentMode === 'LIVE') {
     try {
       // Place market buy
-      const buyResult = await client.newOrder(symbol, 'BUY', 'MARKET', {
+      const buyResult = (await client.newOrder(symbol, 'BUY', 'MARKET', {
         quoteOrderQty: shareAmount.toFixed(2)
-      }) as any
+      })) as any
 
       // Extract actual fill
       const fills = buyResult.data.fills || []
       if (fills.length > 0) {
         const totalQty = fills.reduce((sum: number, f: any) => sum + parseFloat(f.qty), 0)
-        const totalCost = fills.reduce((sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty), 0)
+        const totalCost = fills.reduce(
+          (sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty),
+          0
+        )
         buyFillPrice = totalCost / totalQty
         quantity = totalQty
-        console.log(`[GRID FILL] ${symbol} BUY: ${quantity.toFixed(6)} @ avg $${buyFillPrice.toFixed(6)}`)
+        console.log(
+          `[GRID FILL] ${symbol} BUY: ${quantity.toFixed(6)} @ avg $${buyFillPrice.toFixed(6)}`
+        )
       }
 
       // Recalculate sell price based on actual fill
@@ -276,16 +294,23 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
 
       // Place GTC limit sell immediately
       try {
-        const sellResult = await client.newOrder(symbol, 'SELL', 'LIMIT', {
+        const sellResult = (await client.newOrder(symbol, 'SELL', 'LIMIT', {
           quantity: quantity.toString(),
-          price: sellLimitPrice.toFixed(filter?.tickSize ? filter.tickSize.toString().split('.')[1]?.length || 2 : 4),
+          price: sellLimitPrice.toFixed(
+            filter?.tickSize ? filter.tickSize.toString().split('.')[1]?.length || 2 : 4
+          ),
           timeInForce: 'GTC'
-        }) as any
+        })) as any
 
         binanceSellOrderId = sellResult.data.orderId?.toString()
-        console.log(`[GRID SELL ORDER] ${symbol}: GTC SELL placed @ $${sellLimitPrice.toFixed(4)} (orderId: ${binanceSellOrderId})`)
+        console.log(
+          `[GRID SELL ORDER] ${symbol}: GTC SELL placed @ $${sellLimitPrice.toFixed(4)} (orderId: ${binanceSellOrderId})`
+        )
       } catch (sellErr: any) {
-        console.error(`[GRID] Failed to place limit sell for ${symbol}:`, sellErr.response?.data || sellErr.message)
+        console.error(
+          `[GRID] Failed to place limit sell for ${symbol}:`,
+          sellErr.response?.data || sellErr.message
+        )
         // Still record the grid level even if sell order failed — user can manage manually
       }
 
@@ -332,16 +357,19 @@ const executeGridBuy = async (symbol: string, currentPrice: number): Promise<voi
   })
 
   // Log the buy trade
-  await logTrade({
-    symbol,
-    side: 'BUY',
-    price: buyFillPrice,
-    quantity,
-    pnl: 0,
-    roi: 0,
-    fee: shareAmount * LIVE_FEE_RATE,
-    reason: 'GRID_BUY'
-  }, currentMode)
+  await logTrade(
+    {
+      symbol,
+      side: 'BUY',
+      price: buyFillPrice,
+      quantity,
+      pnl: 0,
+      roi: 0,
+      fee: shareAmount * LIVE_FEE_RATE,
+      reason: 'GRID_BUY'
+    },
+    currentMode
+  )
 
   botEvents.emit('trade_executed', {
     symbol,
@@ -368,7 +396,9 @@ const handleGridSellFill = async (
   const pnl = (fillPrice - level.buyPrice) * level.quantity
   const roi = (fillPrice - level.buyPrice) / level.buyPrice
 
-  console.log(`[GRID SELL FILLED] ${symbol}: Sold ${level.quantity.toFixed(6)} @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)} (${(roi * 100).toFixed(2)}%)`)
+  console.log(
+    `[GRID SELL FILLED] ${symbol}: Sold ${level.quantity.toFixed(6)} @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)} (${(roi * 100).toFixed(2)}%)`
+  )
 
   await markGridLevelFilled(level.id)
 
@@ -383,16 +413,19 @@ const handleGridSellFill = async (
     botEvents.emit('balance_update', { ...balances })
   }
 
-  await logTrade({
-    symbol,
-    side: 'SELL',
-    price: fillPrice,
-    quantity: level.quantity,
-    pnl,
-    roi,
-    fee: fillPrice * level.quantity * LIVE_FEE_RATE,
-    reason: 'GRID_SELL_FILL'
-  }, currentMode)
+  await logTrade(
+    {
+      symbol,
+      side: 'SELL',
+      price: fillPrice,
+      quantity: level.quantity,
+      pnl,
+      roi,
+      fee: fillPrice * level.quantity * LIVE_FEE_RATE,
+      reason: 'GRID_SELL_FILL'
+    },
+    currentMode
+  )
 
   botEvents.emit('trade_executed', {
     symbol,
@@ -438,9 +471,8 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
   // --- TRAILING STOP CHECK ---
   // Fires before UP/DOWN grid logic so a stop hit terminates processing immediately
   {
-    const avgEntry = state.baseEntryCost > 0
-      ? state.baseEntryCost / state.baseQuantity
-      : state.basePrice
+    const avgEntry =
+      state.baseEntryCost > 0 ? state.baseEntryCost / state.baseQuantity : state.basePrice
     const levelsUp = Math.log(state.basePrice / avgEntry) / Math.log(1 + stepMult)
     const triggerLevels = getTrailingStopLevels()
     const stopPct = getTrailingStopPct()
@@ -451,17 +483,23 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
         // Arm the trail from the current price (re-arms on restart too)
         ts = { armed: true, trailHigh: currentPrice, stopPrice: currentPrice * (1 - stopPct) }
         trailingStops[symbol] = ts
-        console.log(`[TRAIL] ${symbol}: ARMED @ $${currentPrice.toFixed(4)} (${levelsUp.toFixed(2)} levels up, stop ${(stopPct * 100).toFixed(2)}% below high)`)
+        console.log(
+          `[TRAIL] ${symbol}: ARMED @ $${currentPrice.toFixed(4)} (${levelsUp.toFixed(2)} levels up, stop ${(stopPct * 100).toFixed(2)}% below high)`
+        )
       }
       // Update high-water mark if price rises further
       if (currentPrice > ts.trailHigh) {
         ts.trailHigh = currentPrice
         ts.stopPrice = currentPrice * (1 - stopPct)
-        console.log(`[TRAIL] ${symbol}: High → $${ts.trailHigh.toFixed(4)}, Stop → $${ts.stopPrice.toFixed(4)}`)
+        console.log(
+          `[TRAIL] ${symbol}: High → $${ts.trailHigh.toFixed(4)}, Stop → $${ts.stopPrice.toFixed(4)}`
+        )
       }
       // Fire if price drops to or below the stop
       if (currentPrice <= ts.stopPrice) {
-        console.log(`[TRAIL] ${symbol}: STOP HIT @ $${currentPrice.toFixed(4)} (stop was $${ts.stopPrice.toFixed(4)}). Selling base share...`)
+        console.log(
+          `[TRAIL] ${symbol}: STOP HIT @ $${currentPrice.toFixed(4)} (stop was $${ts.stopPrice.toFixed(4)}). Selling base share...`
+        )
         delete trailingStops[symbol]
         sellBaseShare(symbol, 'TRAIL_STOP_SELL').catch(console.error)
         return // sellBaseShare calls broadcastMarketUpdate internally
@@ -469,18 +507,17 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
     } else if (ts?.armed) {
       // Fell back below trigger threshold (e.g. manual base change) — disarm
       delete trailingStops[symbol]
-      console.log(`[TRAIL] ${symbol}: Disarmed (levels up ${levelsUp.toFixed(2)} < threshold ${triggerLevels})`)
+      console.log(
+        `[TRAIL] ${symbol}: Disarmed (levels up ${levelsUp.toFixed(2)} < threshold ${triggerLevels})`
+      )
     }
   }
 
   // Determine the reference price for the next buy:
   // The next buy triggers at gridStep% BELOW whichever is lower: basePrice or the lowest current grid level buy
-  const lowestLevelBuyPrice = levels.length > 0
-    ? Math.min(...levels.map((l) => l.buyPrice))
-    : null
-  const referencePrice = lowestLevelBuyPrice !== null
-    ? Math.min(state.basePrice, lowestLevelBuyPrice)
-    : state.basePrice
+  const lowestLevelBuyPrice = levels.length > 0 ? Math.min(...levels.map((l) => l.buyPrice)) : null
+  const referencePrice =
+    lowestLevelBuyPrice !== null ? Math.min(state.basePrice, lowestLevelBuyPrice) : state.basePrice
   const nextBuyTrigger = referencePrice * (1 - stepMult)
 
   // --- UP: Move base price up, no trade ---
@@ -489,7 +526,9 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
     const newBase = currentPrice
     state.basePrice = newBase
     await saveGridState(symbol, state, currentMode)
-    console.log(`[GRID UP] ${symbol}: Base price moved from $${oldBase.toFixed(4)} → $${newBase.toFixed(4)} (+${gridStep}%). No trade.`)
+    console.log(
+      `[GRID UP] ${symbol}: Base price moved from $${oldBase.toFixed(4)} → $${newBase.toFixed(4)} (+${gridStep}%). No trade.`
+    )
     broadcastMarketUpdate(symbol, currentPrice)
     return
   }
@@ -499,7 +538,9 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
   const lastBuy = levelCooldowns[cooldownKey] || 0
   if (currentPrice <= nextBuyTrigger && Date.now() - lastBuy > LEVEL_COOLDOWN_MS) {
     levelCooldowns[cooldownKey] = Date.now()
-    console.log(`[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`)
+    console.log(
+      `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
+    )
     executeGridBuy(symbol, currentPrice).catch(console.error)
   }
 
@@ -526,7 +567,7 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
     // FALLBACK: If cost/quantity was missing from DB migration, estimate it from share amount
     const entryCost = state.baseEntryCost > 0 ? state.baseEntryCost : getShareAmount()
     const entryQty = state.baseQuantity > 0 ? state.baseQuantity : entryCost / state.basePrice
-    
+
     const avgEntryPrice = entryCost / entryQty
     baseUnrealizedPnl = (currentPrice - avgEntryPrice) * entryQty
     baseUnrealizedRoi = (currentPrice - avgEntryPrice) / avgEntryPrice
@@ -606,15 +647,20 @@ const registerBaseShare = async (
         ? { quoteOrderQty: shareAmount.toString() }
         : { quantity: quantity.toString() }
 
-      const result = await client.newOrder(symbol, 'BUY', 'MARKET', orderParams) as any
+      const result = (await client.newOrder(symbol, 'BUY', 'MARKET', orderParams)) as any
 
       const fills = result.data.fills || []
       if (fills.length > 0) {
         const totalQty = fills.reduce((sum: number, f: any) => sum + parseFloat(f.qty), 0)
-        const totalCost = fills.reduce((sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty), 0)
+        const totalCost = fills.reduce(
+          (sum: number, f: any) => sum + parseFloat(f.price) * parseFloat(f.qty),
+          0
+        )
         fillPrice = totalCost / totalQty
         fillQuantity = totalQty
-        console.log(`[BASE SHARE] ${symbol}: Market buy filled @ avg $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}`)
+        console.log(
+          `[BASE SHARE] ${symbol}: Market buy filled @ avg $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}`
+        )
       }
       fetchBalances()
     } catch (e: any) {
@@ -633,18 +679,23 @@ const registerBaseShare = async (
   gridState[symbol] = { basePrice: fillPrice, baseQuantity: fillQuantity, baseEntryCost: cost }
   await saveGridState(symbol, gridState[symbol], currentMode)
 
-  console.log(`[BASE SHARE] ${symbol}: Registered base share @ $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}, cost: $${cost.toFixed(2)}`)
+  console.log(
+    `[BASE SHARE] ${symbol}: Registered base share @ $${fillPrice.toFixed(4)}, qty: ${fillQuantity.toFixed(6)}, cost: $${cost.toFixed(2)}`
+  )
 
-  await logTrade({
-    symbol,
-    side: 'BUY',
-    price: fillPrice,
-    quantity: fillQuantity,
-    pnl: 0,
-    roi: 0,
-    fee: cost * LIVE_FEE_RATE,
-    reason: 'BASE_SHARE'
-  }, currentMode)
+  await logTrade(
+    {
+      symbol,
+      side: 'BUY',
+      price: fillPrice,
+      quantity: fillQuantity,
+      pnl: 0,
+      roi: 0,
+      fee: cost * LIVE_FEE_RATE,
+      reason: 'BASE_SHARE'
+    },
+    currentMode
+  )
 
   botEvents.emit('trade_executed', {
     symbol,
@@ -663,7 +714,10 @@ const registerBaseShare = async (
 // ---------------------------------------------------------------------------
 // Sell Base Share (manual action)
 // ---------------------------------------------------------------------------
-const sellBaseShare = async (symbol: string, reason: string = 'MANUAL_BASE_SELL'): Promise<void> => {
+const sellBaseShare = async (
+  symbol: string,
+  reason: string = 'MANUAL_BASE_SELL'
+): Promise<void> => {
   const state = gridState[symbol]
   if (!state) {
     throw new Error(`No base share registered for ${symbol}`)
@@ -676,13 +730,16 @@ const sellBaseShare = async (symbol: string, reason: string = 'MANUAL_BASE_SELL'
     const filter = symbolFilters[symbol]
     let qty = roundToStep(state.baseQuantity, filter?.stepSize || 0)
     try {
-      const result = await client.newOrder(symbol, 'SELL', 'MARKET', {
+      const result = (await client.newOrder(symbol, 'SELL', 'MARKET', {
         quantity: qty.toString()
-      }) as any
+      })) as any
       const fills = result.data.fills || []
       if (fills.length > 0) {
         const totalQty = fills.reduce((s: number, f: any) => s + parseFloat(f.qty), 0)
-        const totalCost = fills.reduce((s: number, f: any) => s + parseFloat(f.price) * parseFloat(f.qty), 0)
+        const totalCost = fills.reduce(
+          (s: number, f: any) => s + parseFloat(f.price) * parseFloat(f.qty),
+          0
+        )
         fillPrice = totalCost / totalQty
         qty = totalQty
       }
@@ -694,18 +751,23 @@ const sellBaseShare = async (symbol: string, reason: string = 'MANUAL_BASE_SELL'
   }
 
   const pnl = (fillPrice - state.baseEntryCost / state.baseQuantity) * state.baseQuantity
-  const roi = (fillPrice - state.baseEntryCost / state.baseQuantity) / (state.baseEntryCost / state.baseQuantity)
+  const roi =
+    (fillPrice - state.baseEntryCost / state.baseQuantity) /
+    (state.baseEntryCost / state.baseQuantity)
 
-  await logTrade({
-    symbol,
-    side: 'SELL',
-    price: fillPrice,
-    quantity: state.baseQuantity,
-    pnl,
-    roi,
-    fee: fillPrice * state.baseQuantity * LIVE_FEE_RATE,
-    reason
-  }, currentMode)
+  await logTrade(
+    {
+      symbol,
+      side: 'SELL',
+      price: fillPrice,
+      quantity: state.baseQuantity,
+      pnl,
+      roi,
+      fee: fillPrice * state.baseQuantity * LIVE_FEE_RATE,
+      reason
+    },
+    currentMode
+  )
 
   botEvents.emit('trade_executed', {
     symbol,
@@ -720,7 +782,9 @@ const sellBaseShare = async (symbol: string, reason: string = 'MANUAL_BASE_SELL'
 
   delete gridState[symbol]
   await deleteGridState(symbol, currentMode)
-  console.log(`[BASE SHARE SOLD] ${symbol}: Sold @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)}`)
+  console.log(
+    `[BASE SHARE SOLD] ${symbol}: Sold @ $${fillPrice.toFixed(4)}. PnL: $${pnl.toFixed(4)}`
+  )
   broadcastMarketUpdate(symbol, fillPrice)
 }
 
@@ -796,9 +860,7 @@ const binanceRestRequestToHost = (
   return new Promise((resolve, reject) => {
     if (!apiKey) return reject(new Error('No API key'))
 
-    const queryString = Object.keys(params).length
-      ? new URLSearchParams(params).toString()
-      : ''
+    const queryString = Object.keys(params).length ? new URLSearchParams(params).toString() : ''
     const fullPath = queryString ? `${reqPath}?${queryString}` : reqPath
 
     const options = {
@@ -815,7 +877,9 @@ const binanceRestRequestToHost = (
 
     const req = https.request(options, (res) => {
       let body = ''
-      res.on('data', (chunk) => { body += chunk })
+      res.on('data', (chunk) => {
+        body += chunk
+      })
       res.on('end', () => {
         try {
           const parsed = JSON.parse(body)
@@ -844,13 +908,16 @@ const binanceRestRequest = async (
     return result
   } catch (e: any) {
     // Trigger fallback on any 4xx error or HTML response (geo-block returns raw HTML 410)
-    const isGeoBlocked = e.message.includes('410')
-      || e.message.includes('403')
-      || e.message.includes('Gone')
-      || e.message.includes('HTTP 4')
+    const isGeoBlocked =
+      e.message.includes('410') ||
+      e.message.includes('403') ||
+      e.message.includes('Gone') ||
+      e.message.includes('HTTP 4')
     const otherHost = BINANCE_HOSTS.find((h) => h !== activeHost)
     if (otherHost && isGeoBlocked) {
-      console.log(`[USER DATA STREAM] ${activeHost} blocked (${e.message.substring(0, 60)}), trying ${otherHost}...`)
+      console.log(
+        `[USER DATA STREAM] ${activeHost} blocked (${e.message.substring(0, 60)}), trying ${otherHost}...`
+      )
       const result = await binanceRestRequestToHost(otherHost, method, reqPath, params)
       activeHost = otherHost // Remember which one works
       console.log(`[USER DATA STREAM] Switched to ${activeHost}.`)
@@ -873,7 +940,11 @@ const startUserDataStream = async (): Promise<void> => {
 
   const connectWS = (key: string): void => {
     if (udWs) {
-      try { udWs.terminate() } catch { /* ignore */ }
+      try {
+        udWs.terminate()
+      } catch {
+        /* ignore */
+      }
     }
     const wsUrl = `wss://stream.binance.com:9443/ws/${key}`
     console.log(`[USER DATA STREAM] Connecting to ${wsUrl}`)
@@ -897,7 +968,9 @@ const startUserDataStream = async (): Promise<void> => {
             handleGridSellFill(symbol, matchedLevel, fillPrice).catch(console.error)
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     })
 
     udWs.on('error', (err) => {
@@ -926,20 +999,25 @@ const startUserDataStream = async (): Promise<void> => {
     connectWS(listenKey)
 
     // Binance requires a PUT every 29 min to keep the listen key alive
-    setInterval(async () => {
-      try {
-        await binanceRestRequest('PUT', '/api/v3/userDataStream', { listenKey })
-        console.log('[USER DATA STREAM] Listen key renewed.')
-      } catch (e: any) {
-        console.error('[USER DATA STREAM] Failed to renew listen key:', e.message)
-        // Re-obtain a fresh listen key and reconnect
+    setInterval(
+      async () => {
         try {
-          const fresh = await binanceRestRequest('POST', '/api/v3/userDataStream')
-          listenKey = fresh.listenKey
-          connectWS(listenKey)
-        } catch { /* ignore */ }
-      }
-    }, 29 * 60 * 1000) // 29 min — slightly before the 30 min timeout
+          await binanceRestRequest('PUT', '/api/v3/userDataStream', { listenKey })
+          console.log('[USER DATA STREAM] Listen key renewed.')
+        } catch (e: any) {
+          console.error('[USER DATA STREAM] Failed to renew listen key:', e.message)
+          // Re-obtain a fresh listen key and reconnect
+          try {
+            const fresh = await binanceRestRequest('POST', '/api/v3/userDataStream')
+            listenKey = fresh.listenKey
+            connectWS(listenKey)
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+      29 * 60 * 1000
+    ) // 29 min — slightly before the 30 min timeout
   } catch (e: any) {
     console.error('[USER DATA STREAM] Failed to start:', e.message)
     console.log('[ORDER POLL] Falling back to polling open orders every 60s to detect fills...')
@@ -956,14 +1034,14 @@ const startOrderPolling = (): void => {
 
   setInterval(async () => {
     // Collect all symbols that have pending grid levels with order IDs
-    const symbolsToCheck = Object.keys(gridLevels).filter(
-      (sym) => gridLevels[sym]?.some((l) => l.binanceSellOrderId)
+    const symbolsToCheck = Object.keys(gridLevels).filter((sym) =>
+      gridLevels[sym]?.some((l) => l.binanceSellOrderId)
     )
     if (symbolsToCheck.length === 0) return
 
     for (const symbol of symbolsToCheck) {
       try {
-        const openOrdersRes = await client.openOrders(symbol) as any
+        const openOrdersRes = (await client.openOrders(symbol)) as any
         const openOrders: any[] = openOrdersRes.data || []
         const openOrderIds = new Set(openOrders.map((o: any) => o.orderId?.toString()))
 
@@ -972,7 +1050,9 @@ const startOrderPolling = (): void => {
           if (!level.binanceSellOrderId) continue
           if (!openOrderIds.has(level.binanceSellOrderId)) {
             // Order no longer open — assume it was filled at the sell price
-            console.log(`[ORDER POLL] Grid sell likely filled for ${symbol} — order ${level.binanceSellOrderId}`)
+            console.log(
+              `[ORDER POLL] Grid sell likely filled for ${symbol} — order ${level.binanceSellOrderId}`
+            )
             handleGridSellFill(symbol, level, level.sellPrice).catch(console.error)
           }
         }
@@ -1000,7 +1080,9 @@ const startWatchdog = async (): Promise<void> => {
     // If no message for 45 seconds, restart the stream
     const staleTime = Date.now() - lastMessageTime
     if (lastMessageTime > 0 && staleTime > 45_000) {
-      console.warn(`[WATCHDOG] WebSocket stale (no message for ${Math.round(staleTime / 1000)}s). Restarting...`)
+      console.warn(
+        `[WATCHDOG] WebSocket stale (no message for ${Math.round(staleTime / 1000)}s). Restarting...`
+      )
       await connectWebSocket()
     }
   }, 15_000)
@@ -1012,12 +1094,11 @@ const connectWebSocket = async (): Promise<void> => {
 
   const whitelist = await getWhitelist()
   // Monitor all whitelisted symbols + any with active grid states
-  const monitoringSet = new Set([
-    ...whitelist,
-    ...Object.keys(gridState)
-  ])
+  const monitoringSet = new Set([...whitelist, ...Object.keys(gridState)])
   const monitoringList = Array.from(monitoringSet).filter(Boolean)
-  console.log(`[GEN ${currentGen}] Connecting WebSocket for ${monitoringList.length} symbols: ${monitoringList.join(', ')}`)
+  console.log(
+    `[GEN ${currentGen}] Connecting WebSocket for ${monitoringList.length} symbols: ${monitoringList.join(', ')}`
+  )
   botEvents.emit('monitoring_update', monitoringList)
 
   if (monitoringList.length === 0) return
@@ -1043,14 +1124,18 @@ const connectWebSocket = async (): Promise<void> => {
           const price = parseFloat(priceStr)
           if (!isNaN(price)) processTick(symbol, price).catch(console.error)
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   if (wsClient) {
     try {
       wsClient.terminate()
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   wsClient = new WebsocketStream({ callbacks })
@@ -1064,15 +1149,17 @@ const connectWebSocket = async (): Promise<void> => {
 // Reload Whitelist / Reconnect
 // ---------------------------------------------------------------------------
 const reloadWhitelist = async (newSymbols: string[] | string): Promise<void> => {
-  const symbolsList = Array.isArray(newSymbols) ? newSymbols : [newSymbols];
-  currentWhitelist = symbolsList.map((s) => (typeof s === 'object' ? (s as any).symbol : s));
-  console.log(`[WHITELIST] Reloaded: ${currentWhitelist.join(', ')}`);
+  const symbolsList = Array.isArray(newSymbols) ? newSymbols : [newSymbols]
+  currentWhitelist = symbolsList.map((s) => (typeof s === 'object' ? (s as any).symbol : s))
+  console.log(`[WHITELIST] Reloaded: ${currentWhitelist.join(', ')}`)
 
   if (wsClient) {
     try {
       if (typeof wsClient.disconnect === 'function') wsClient.disconnect()
       if (wsClient.ws) wsClient.ws.terminate()
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   await updateFilters()
@@ -1141,9 +1228,8 @@ export const getUnrealizedPnl = (): number => {
     // Use true cost basis (original entry price), not the floating grid reference.
     // The floating basePrice ratchets up as price rises, which would make profitable
     // positions appear as losses once price dips below the new grid reference.
-    const avgEntry = state.baseEntryCost > 0
-      ? state.baseEntryCost / state.baseQuantity
-      : state.basePrice
+    const avgEntry =
+      state.baseEntryCost > 0 ? state.baseEntryCost / state.baseQuantity : state.basePrice
     total += (price - avgEntry) * state.baseQuantity
     const levels = gridLevels[symbol] || []
     for (const level of levels) {
@@ -1183,7 +1269,10 @@ export const getFullGridState = (): Record<string, any> => {
 // ---------------------------------------------------------------------------
 // Legacy compatibility exports
 // ---------------------------------------------------------------------------
-export const executeManualTrade = async (symbol: string, side: 'BUY' | 'SELL'): Promise<boolean> => {
+export const executeManualTrade = async (
+  symbol: string,
+  side: 'BUY' | 'SELL'
+): Promise<boolean> => {
   if (side === 'SELL') {
     await sellBaseShare(symbol)
     return true
@@ -1199,7 +1288,9 @@ export const executeManualTrade = async (symbol: string, side: 'BUY' | 'SELL'): 
 export const getCurrentMode = (): string => currentMode
 
 // Forward-compatible no-ops for removed features
-export const reloadDecoupledList = async (): Promise<void> => { /* no-op */ }
+export const reloadDecoupledList = async (): Promise<void> => {
+  /* no-op */
+}
 export const toggleBotManualMode = async (): Promise<boolean> => true
 
 // ---------------------------------------------------------------------------
@@ -1221,7 +1312,9 @@ export const startBot = async (): Promise<void> => {
 
   currentWhitelist = await getWhitelist()
   console.log(`[BOT] Whitelist: ${currentWhitelist.join(', ')}`)
-  console.log(`[BOT] Mode: ${currentMode}, Share: $${getShareAmount()}, Grid Step: ${getGridStep()}%`)
+  console.log(
+    `[BOT] Mode: ${currentMode}, Share: $${getShareAmount()}, Grid Step: ${getGridStep()}%`
+  )
 
   loadBotState()
 
@@ -1245,34 +1338,40 @@ export const startBot = async (): Promise<void> => {
   botIntervals.push(setInterval(updateFilters, 60 * 60 * 1000))
 
   // Market pulse log every minute
-  botIntervals.push(setInterval(() => {
-    const symbolList = [...new Set([...currentWhitelist, ...Object.keys(gridState)])]
-    const summary = symbolList.map((sym) => {
-      const price = lastPrices[sym]
-      const state = gridState[sym]
-      const levels = (gridLevels[sym] || []).length
-      if (!price) return `${sym.replace('USDT', '')}: no data`
-      const pct = state ? (((price - state.basePrice) / state.basePrice) * 100).toFixed(2) + '%' : 'no base'
-      return `${sym.replace('USDT', '')}: $${price.toFixed(4)} (${pct}) [${levels} levels]`
-    }).join(' | ')
-    console.log(`[MARKET PULSE] ${summary}`)
-  }, 60_000))
+  botIntervals.push(
+    setInterval(() => {
+      const symbolList = [...new Set([...currentWhitelist, ...Object.keys(gridState)])]
+      const summary = symbolList
+        .map((sym) => {
+          const price = lastPrices[sym]
+          const state = gridState[sym]
+          const levels = (gridLevels[sym] || []).length
+          if (!price) return `${sym.replace('USDT', '')}: no data`
+          const pct = state
+            ? (((price - state.basePrice) / state.basePrice) * 100).toFixed(2) + '%'
+            : 'no base'
+          return `${sym.replace('USDT', '')}: $${price.toFixed(4)} (${pct}) [${levels} levels]`
+        })
+        .join(' | ')
+      console.log(`[MARKET PULSE] ${summary}`)
+    }, 60_000)
+  )
 
   // Telegram Notifications for Trades
   botEvents.on('trade_executed', (data: any) => {
     const sideStr = data.side === 'BUY' ? '🟢 BOUGHT' : '🔴 SOLD'
     const icon = data.side === 'BUY' ? '🛒' : '💰'
-    
+
     let msg = `${icon} ${sideStr} ${data.symbol}\n`
     msg += `Price: $${data.price.toFixed(4)}\n`
     msg += `Quantity: ${data.quantity.toFixed(6)}\n`
-    
+
     if (data.side === 'SELL') {
       msg += `Profit: $${data.pnl.toFixed(4)} (${(data.roi * 100).toFixed(2)}%)\n`
     }
-    
+
     msg += `Mode: ${currentMode} | Reason: ${data.reason}`
-    
+
     sendTelegramMessage(msg)
   })
 
@@ -1280,10 +1379,4 @@ export const startBot = async (): Promise<void> => {
 }
 
 // Named exports for IPC compatibility
-export {
-  reloadWhitelist,
-  registerBaseShare,
-  sellBaseShare,
-  clearGridLevels,
-  updateSettingsLocally
-}
+export { reloadWhitelist, registerBaseShare, sellBaseShare, clearGridLevels, updateSettingsLocally }

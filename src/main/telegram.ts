@@ -5,7 +5,9 @@ export const sendTelegramMessage = (message: string): void => {
   const chatId = process.env['TELEGRAM_CHAT_ID']
 
   if (!token || !chatId) {
-    console.warn('[TELEGRAM] Skipping notification. TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set in .env')
+    console.warn(
+      '[TELEGRAM] Skipping notification. TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set in .env'
+    )
     return
   }
 
@@ -26,13 +28,13 @@ export const sendTelegramMessage = (message: string): void => {
   }
 
   const req = https.request(options, (res) => {
-    let body = '';
-    res.on('data', chunk => body += chunk);
+    let body = ''
+    res.on('data', (chunk) => (body += chunk))
     res.on('end', () => {
       if (res.statusCode !== 200) {
-        console.warn(`[TELEGRAM] Failed to send message. HTTP ${res.statusCode}: ${body}`);
+        console.warn(`[TELEGRAM] Failed to send message. HTTP ${res.statusCode}: ${body}`)
       }
-    });
+    })
   })
 
   req.on('error', (error) => {

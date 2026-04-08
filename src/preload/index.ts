@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type {
+  Trade,
+  BalanceUpdate,
+  MarketUpdate,
+  Settings,
+  Stats,
+  BacktestResults,
+  VersionInfo
+} from '../shared/types'
 
 const api = {
   // ---- Bot lifecycle ----
@@ -19,38 +28,63 @@ const api = {
 
   // ---- Events (bot → renderer) ----
   getConnectionStatus: () => ipcRenderer.invoke('bot:getConnectionStatus'),
-  onMarketUpdate: (callback: (data: any) => void) => {
+
+  // Market updates
+  onMarketUpdate: (callback: (data: MarketUpdate) => void) => {
     ipcRenderer.on('bot:marketUpdate', (_event, data) => callback(data))
   },
-  onTradeExecuted: (callback: (data: any) => void) => {
+  offMarketUpdate: (callback: (data: MarketUpdate) => void) => {
+    ipcRenderer.off('bot:marketUpdate', (_event, data) => callback(data))
+  },
+
+  // Trade executions
+  onTradeExecuted: (callback: (data: Trade) => void) => {
     ipcRenderer.on('bot:tradeExecuted', (_event, data) => callback(data))
   },
-  onBalanceUpdate: (callback: (data: any) => void) => {
+  offTradeExecuted: (callback: (data: Trade) => void) => {
+    ipcRenderer.off('bot:tradeExecuted', (_event, data) => callback(data))
+  },
+
+  // Balance updates
+  onBalanceUpdate: (callback: (data: BalanceUpdate) => void) => {
     ipcRenderer.on('bot:balanceUpdate', (_event, data) => callback(data))
   },
-  onMonitoringUpdate: (callback: (data: any) => void) => {
+  offBalanceUpdate: (callback: (data: BalanceUpdate) => void) => {
+    ipcRenderer.off('bot:balanceUpdate', (_event, data) => callback(data))
+  },
+
+  // Monitoring updates (unknown type)
+  onMonitoringUpdate: (callback: (data: unknown) => void) => {
     ipcRenderer.on('bot:monitoringUpdate', (_event, data) => callback(data))
   },
+  offMonitoringUpdate: (callback: (data: unknown) => void) => {
+    ipcRenderer.off('bot:monitoringUpdate', (_event, data) => callback(data))
+  },
+
+  // Connection status
   onConnectionStatus: (callback: (status: boolean) => void) => {
     ipcRenderer.on('bot:connectionStatus', (_event, status) => callback(status))
   },
+  offConnectionStatus: (callback: (status: boolean) => void) => {
+    ipcRenderer.off('bot:connectionStatus', (_event, status) => callback(status))
+  },
 
   // ---- Whitelist ----
-  getWhitelist: () => ipcRenderer.invoke('bot:getWhitelist'),
+  getWhitelist: () => ipcRenderer.invoke('bot:getWhitelist') as Promise<string[]>,
   saveWhitelist: (symbols: string[]) => ipcRenderer.invoke('bot:saveWhitelist', symbols),
-  getVersion: () => ipcRenderer.invoke('bot:getVersion'),
+  getVersion: () => ipcRenderer.invoke('bot:getVersion') as Promise<VersionInfo>,
 
   // ---- Settings ----
-  getSettings: () => ipcRenderer.invoke('bot:getSettings'),
+  getSettings: () => ipcRenderer.invoke('bot:getSettings') as Promise<Settings>,
   saveSettings: (settings: { key: string; value: string }) =>
     ipcRenderer.invoke('bot:saveSettings', settings),
 
   // ---- Stats ----
-  getStats: () => ipcRenderer.invoke('bot:getStats'),
+  getStats: () => ipcRenderer.invoke('bot:getStats') as Promise<Stats>,
   getRecentTrades: (payload: { mode: string; limit: number }) =>
-    ipcRenderer.invoke('bot:getRecentTrades', payload),
+    ipcRenderer.invoke('bot:getRecentTrades', payload) as Promise<Trade[]>,
   getTradesByTimeRange: (mode: string, startMs: number, endMs: number) =>
-    ipcRenderer.invoke('bot:getTradesByTimeRange', mode, startMs, endMs),
+    ipcRenderer.invoke('bot:getTradesByTimeRange', mode, startMs, endMs) as Promise<Trade[]>,
   clearTradeHistory: (mode: string) => ipcRenderer.invoke('bot:clearTradeHistory', mode),
   wipeAllData: (mode: string) => ipcRenderer.invoke('bot:wipeAllData', mode),
 
@@ -61,12 +95,32 @@ const api = {
     end: string,
     shareAmount: number,
     gridStep: number
-  ) => ipcRenderer.invoke('bot:runBacktest', symbol, start, end, shareAmount, gridStep),
-  onBacktestUpdate: (callback: (data: any) => void) => {
+  ) =>
+    ipcRenderer.invoke(
+      'bot:runBacktest',
+      symbol,
+      start,
+      end,
+      shareAmount,
+      gridStep
+    ) as Promise<BacktestResults>,
+
+  onBacktestUpdate: (
+    callback: (data: BacktestResults | { status: string; message?: string }) => void
+  ) => {
     ipcRenderer.on('bt:update', (_event, data) => callback(data))
   },
+  offBacktestUpdate: (
+    callback: (data: BacktestResults | { status: string; message?: string }) => void
+  ) => {
+    ipcRenderer.off('bt:update', (_event, data) => callback(data))
+  },
+
   onBacktestProgress: (callback: (progress: number) => void) => {
     ipcRenderer.on('bt:progress', (_event, progress) => callback(progress))
+  },
+  offBacktestProgress: (callback: (progress: number) => void) => {
+    ipcRenderer.off('bt:progress', (_event, progress) => callback(progress))
   }
 }
 
@@ -78,8 +132,8 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
+  // @ts-ignore: contextIsolated is false in non-isolated context
   window.electron = electronAPI
-  // @ts-ignore
+  // @ts-ignore: contextIsolated is false in non-isolated context
   window.api = api
 }

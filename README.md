@@ -16,7 +16,7 @@ Unlike traditional signal-based bots, the **Grid DCA Bot** focuses on price accu
 - **Electron Main Process**: High-priority Node.js engine for WebSocket streams and Binance REST API interaction.
 - **React 19 Renderer**: Stunning, dark-mode dashboard with real-time PnL tracking and trade logs.
 - **PostgreSQL Persistence**: Remote database for grid state, trade history, and candle caching.
-- **Enhanced Connectivity**: 
+- **Enhanced Connectivity**:
   - Robust Binance US/Global auto-fallback logic.
   - Fail-safe **Order Polling** (60s interval) for fill detection if User Data Streams are restricted.
 - **Integrated Backtester**: 1-minute OHLCV candle-based simulation engine with PostgreSQL caching for ultra-fast multi-month testing.

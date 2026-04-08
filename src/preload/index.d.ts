@@ -1,28 +1,18 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
+import {
+  GridLevel,
+  SymbolGridState,
+  Trade,
+  BalanceUpdate,
+  Stats,
+  Settings,
+  BacktestResults,
+  VersionInfo,
+  MarketUpdate
+} from '../shared/types'
 
-export interface GridLevel {
-  id: number
-  buyPrice: number
-  sellPrice: number
-  quantity: number
-  cost: number
-  pctChange: number
-}
-
-export interface SymbolGridState {
-  symbol: string
-  hasBaseShare: boolean
-  basePrice?: number
-  baseQuantity?: number
-  baseEntryCost?: number
-  currentPrice: number
-  pctFromBase?: number
-  gridLevels: GridLevel[]
-  totalUnrealizedPnl: number
-  trailActive?: boolean
-  trailHigh?: number
-  trailStopPrice?: number
-}
+// Re-export shared types for backward compatibility
+export { GridLevel, SymbolGridState }
 
 export interface IElectronAPI {
   startBot: () => Promise<void>
@@ -37,37 +27,34 @@ export interface IElectronAPI {
   // Manual trade (quick base share register/sell)
   manualTrade: (symbol: string, side: string) => Promise<boolean>
 
-  // Events
-  onMarketUpdate: (callback: (data: any) => void) => void
-  onTradeExecuted: (callback: (data: any) => void) => void
-  onBalanceUpdate: (callback: (data: any) => void) => void
-  onMonitoringUpdate: (callback: (data: any) => void) => void
+  // Events with typed callbacks
+  onMarketUpdate: (callback: (data: MarketUpdate) => void) => void
+  offMarketUpdate: (callback: (data: MarketUpdate) => void) => void
+  onTradeExecuted: (callback: (data: Trade) => void) => void
+  offTradeExecuted: (callback: (data: Trade) => void) => void
+  onBalanceUpdate: (callback: (data: BalanceUpdate) => void) => void
+  offBalanceUpdate: (callback: (data: BalanceUpdate) => void) => void
+  onMonitoringUpdate: (callback: (data: unknown) => void) => void
+  offMonitoringUpdate: (callback: (data: unknown) => void) => void
   onConnectionStatus: (callback: (status: boolean) => void) => void
+  offConnectionStatus: (callback: (status: boolean) => void) => void
   getConnectionStatus: () => Promise<boolean>
 
   // Whitelist
   getWhitelist: () => Promise<string[]>
   saveWhitelist: (symbols: string[]) => Promise<boolean>
-  getVersion: () => Promise<{ frontend: string; backend: string }>
+  getVersion: () => Promise<VersionInfo>
 
   // Settings
-  getSettings: () => Promise<Record<string, string>>
+  getSettings: () => Promise<Settings>
   saveSettings: (settings: { key: string; value: string }) => Promise<boolean>
 
   // Stats
-  getStats: () => Promise<{
-    totalPnl: number
-    totalFees: number
-    avgRoi: number
-    winRate: number
-    fillRate: number
-    totalTrades: number
-    unrealizedPnl: number
-  }>
+  getStats: () => Promise<Stats>
 
   // Trade history
-  getRecentTrades: (args: { mode: string; limit: number }) => Promise<any[]>
-  getTradesByTimeRange: (mode: string, startMs: number, endMs: number) => Promise<any[]>
+  getRecentTrades: (args: { mode: string; limit: number }) => Promise<Trade[]>
+  getTradesByTimeRange: (mode: string, startMs: number, endMs: number) => Promise<Trade[]>
   clearTradeHistory: (mode: string) => Promise<boolean>
   wipeAllData: (mode: string) => Promise<boolean>
 
@@ -78,9 +65,15 @@ export interface IElectronAPI {
     end: string,
     shareAmount: number,
     gridStep: number
-  ) => Promise<any>
-  onBacktestUpdate: (callback: (data: any) => void) => void
+  ) => Promise<BacktestResults>
+  onBacktestUpdate: (
+    callback: (data: BacktestResults | { status: string; message?: string }) => void
+  ) => void
+  offBacktestUpdate: (
+    callback: (data: BacktestResults | { status: string; message?: string }) => void
+  ) => void
   onBacktestProgress: (callback: (progress: number) => void) => void
+  offBacktestProgress: (callback: (progress: number) => void) => void
 }
 
 declare global {

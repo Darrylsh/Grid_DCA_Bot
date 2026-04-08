@@ -1,7 +1,7 @@
 // Filter Binance PING/PONG logs that clutter the terminal
 const filterBinanceHeartbeats = (method: 'log' | 'info' | 'warn' | 'debug'): void => {
   const original = console[method]
-  // @ts-ignore
+  // @ts-ignore: Overriding console method for filtering heartbeat logs
   console[method] = (...args: unknown[]): void => {
     const msg = args.map((arg) => String(arg)).join(' ')
     if (
@@ -18,7 +18,7 @@ const filterBinanceHeartbeats = (method: 'log' | 'info' | 'warn' | 'debug'): voi
 ;(['log', 'info', 'warn', 'debug'] as const).forEach(filterBinanceHeartbeats)
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout)
-// @ts-ignore
+// @ts-ignore: Overriding stdout.write for filtering heartbeat logs
 process.stdout.write = (
   chunk: string | Uint8Array,
   encoding?: BufferEncoding | ((error: Error | null | undefined) => void),
@@ -44,12 +44,33 @@ import * as dotenv from 'dotenv'
 
 dotenv.config({ path: join(__dirname, '../../.env') })
 
+// Single instance lock
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  process.exit(0)
+}
+
+app.on('second-instance', () => {
+  const windows = BrowserWindow.getAllWindows()
+  if (windows.length > 0) {
+    const mainWindow = windows[0]
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
+})
+
 const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://192.168.10.42:3030'
 const socket = ioClient(SERVER_URL)
 
-const socketCall = (event: string, ...args: any[]): Promise<any> => {
+interface SocketResponse {
+  success: boolean
+  data?: unknown
+  error?: string
+}
+
+const socketCall = (event: string, ...args: unknown[]): Promise<unknown> => {
   return new Promise((resolve, reject) => {
-    socket.timeout(5000).emit(event, ...args, (err: any, res: any) => {
+    socket.timeout(5000).emit(event, ...args, (err: unknown, res: SocketResponse | undefined) => {
       if (err) return reject(new Error(`Socket timeout on ${event}`))
       if (!res) return resolve(undefined)
       if (res.success) return resolve(res.data)
@@ -59,7 +80,13 @@ const socketCall = (event: string, ...args: any[]): Promise<any> => {
 }
 
 function createWindow(settings: Record<string, string>): void {
-  let windowState = { width: 1200, height: 750, x: undefined as number | undefined, y: undefined as number | undefined, isMaximized: false }
+  let windowState = {
+    width: 1200,
+    height: 750,
+    x: undefined as number | undefined,
+    y: undefined as number | undefined,
+    isMaximized: false
+  }
   try {
     if (settings.window_state) {
       windowState = JSON.parse(settings.window_state)
@@ -96,17 +123,23 @@ function createWindow(settings: Record<string, string>): void {
     saveTimeout = setTimeout(async () => {
       const bounds = mainWindow.getBounds()
       const isMaximized = mainWindow.isMaximized()
-      await socketCall('updateSetting', 'window_state', JSON.stringify({ ...bounds, isMaximized })).catch(console.error)
+      await socketCall(
+        'updateSetting',
+        'window_state',
+        JSON.stringify({ ...bounds, isMaximized })
+      ).catch(console.error)
     }, 1000)
   }
   mainWindow.on('resize', saveWindowState)
   mainWindow.on('move', saveWindowState)
 
   // Forward bot events to renderer
-  const fwd = (channel: string) => (data: unknown): void => {
-    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data)
-  }
-  
+  const fwd =
+    (channel: string) =>
+    (data: unknown): void => {
+      if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data)
+    }
+
   socket.on('market_update', fwd('bot:marketUpdate'))
   socket.on('trade_executed', fwd('bot:tradeExecuted'))
   socket.on('balance_update', fwd('bot:balanceUpdate'))
@@ -114,7 +147,7 @@ function createWindow(settings: Record<string, string>): void {
   socket.on('settings_updated', fwd('bot:settingsUpdated'))
   socket.on('grid_levels_update', fwd('bot:gridLevelsUpdate'))
   socket.on('bot_log', fwd('bot:botLog'))
-  
+
   socket.on('connect', () => fwd('bot:connectionStatus')(true))
   socket.on('disconnect', () => fwd('bot:connectionStatus')(false))
 
@@ -140,7 +173,10 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron')
 
   // Initialize by fetching settings via socket
-  const initialSettings = await socketCall('getSettings').catch(() => ({}))
+  const initialSettings = (await socketCall('getSettings').catch(() => ({}))) as Record<
+    string,
+    string
+  >
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -164,19 +200,19 @@ app.whenReady().then(async () => {
     await socketCall('registerBaseShare', symbol, price, quantity, price * quantity)
     return true
   })
-  
+
   handleIPC('bot:sellBaseShare', async (_, symbol: string) => {
     await socketCall('sellBaseShare', symbol)
     return true
   })
-  
+
   handleIPC('bot:clearGridLevels', async (_, symbol: string) => {
     await socketCall('clearGridLevels', symbol)
     return true
   })
-  
+
   handleIPC('bot:getGridState', async () => await socketCall('getFullGridState', undefined))
-  
+
   // Note: For deleting, headless doesn't typically provide local delete via remote right now
   // We can just fallback to resolving true for legacy
   handleIPC('bot:deleteBaseShare', async () => true)
@@ -187,10 +223,17 @@ app.whenReady().then(async () => {
 
   handleIPC(
     'bot:runBacktest',
-    async (event, symbol: string, start: string, end: string, shareAmount: number, gridStep: number) => {
+    async (
+      event,
+      symbol: string,
+      start: string,
+      end: string,
+      shareAmount: number,
+      gridStep: number
+    ) => {
       // Temporarily bind backtest streams from socket to renderer
-      const onProgress = (p: any) => event.sender.send('bt:progress', p)
-      const onUpdate = (u: any) => event.sender.send('bt:update', u)
+      const onProgress = (p: unknown): void => event.sender.send('bt:progress', p)
+      const onUpdate = (u: unknown): void => event.sender.send('bt:update', u)
       socket.on('bt:progress', onProgress)
       socket.on('bt:update', onUpdate)
 
@@ -213,14 +256,17 @@ app.whenReady().then(async () => {
     return true
   })
 
-  handleIPC('bot:getSettings', async () => await socketCall('getSettings'))
+  handleIPC(
+    'bot:getSettings',
+    async () => (await socketCall('getSettings')) as Record<string, string>
+  )
   handleIPC('bot:saveSettings', async (_, { key, value }: { key: string; value: string }) => {
     await socketCall('updateSetting', key, value)
     return true
   })
 
   handleIPC('bot:getStats', async () => {
-    const metrics = await socketCall('getMetrics').catch(() => ({}))
+    const metrics = (await socketCall('getMetrics').catch(() => ({}))) as Record<string, unknown>
     const unrealizedPnl = await socketCall('getUnrealizedPnl').catch(() => 0)
     return { ...metrics, unrealizedPnl }
   })
@@ -240,7 +286,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(await socketCall('getSettings').catch(() => ({})))
+      createWindow((await socketCall('getSettings').catch(() => ({}))) as Record<string, string>)
     }
   })
 })
