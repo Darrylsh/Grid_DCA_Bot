@@ -181,7 +181,7 @@ export async function runBacktest(
     quantity: baseQty,
     cost: baseCost,
     fee: baseCost * FEE_RATE,
-    timestamp: new Date(firstCandle.open_time).toISOString(),
+    timestamp: new Date(firstCandle.openTime).toISOString(),
     reason: 'BASE_SHARE',
     pnl: null,
     roi: null
@@ -211,11 +211,11 @@ export async function runBacktest(
   // ---- 3. Walk candles ----
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i]
-    const { open_time, high, low, close } = candle
+    const { openTime, high, low, close } = candle
 
     // Progress chart sampling
     if (i - lastChartSample >= CHART_SAMPLE) {
-      chartData.push({ t: open_time, p: close })
+      chartData.push({ t: openTime, p: close })
       lastChartSample = i
     }
 
@@ -251,7 +251,7 @@ export async function runBacktest(
             quantity: baseQty,
             cost: baseCost,
             fee,
-            timestamp: new Date(open_time).toISOString(),
+            timestamp: new Date(openTime).toISOString(),
             reason: 'TRAIL_STOP',
             pnl,
             roi
@@ -287,7 +287,7 @@ export async function runBacktest(
           quantity: level.qty,
           cost: level.cost,
           fee,
-          timestamp: new Date(open_time).toISOString(),
+          timestamp: new Date(openTime).toISOString(),
           reason: 'GRID_SELL_FILL',
           pnl: netPnl,
           roi,
@@ -343,7 +343,7 @@ export async function runBacktest(
         quantity: qty,
         cost: shareCost,
         fee: buyFee,
-        timestamp: new Date(open_time).toISOString(),
+        timestamp: new Date(openTime).toISOString(),
         reason: 'GRID_BUY',
         pnl: null,
         roi: null,
@@ -387,8 +387,8 @@ export async function runBacktest(
           ? (sellTrades.filter((t) => t.pnl > 0).length / sellTrades.length) * 100
           : 0,
         range: {
-          start: new Date(candles[0].open_time).toISOString(),
-          end: new Date(candle.open_time).toISOString(),
+          start: new Date(candles[0].openTime).toISOString(),
+          end: new Date(candle.openTime).toISOString(),
           candlesProcessed: i + 1
         }
       })
@@ -397,7 +397,7 @@ export async function runBacktest(
 
   // Ensure last candle is in chart data
   const lastCandle = candles[candles.length - 1]
-  chartData.push({ t: lastCandle.open_time, p: lastCandle.close })
+  chartData.push({ t: lastCandle.openTime, p: lastCandle.close })
 
   // ---- 4. Final Results ----
   const finalPrice = lastCandle.close
@@ -430,8 +430,8 @@ export async function runBacktest(
     trades,
     chartData,
     range: {
-      start: new Date(candles[0].open_time).toISOString(),
-      end: new Date(lastCandle.open_time).toISOString(),
+      start: new Date(candles[0].openTime).toISOString(),
+      end: new Date(lastCandle.openTime).toISOString(),
       candlesProcessed: candles.length
     }
   }

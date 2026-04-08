@@ -123,10 +123,12 @@ const getWhitelist = async (): Promise<string[]> => {
   return rows.map((r) => r.symbol);
 }
 
-const updateWhitelist = async (symbols: string[]): Promise<string[]> => {
+const updateWhitelist = async (symbols: string[] | string): Promise<string[]> => {
+  const symbolsList = Array.isArray(symbols) ? symbols : [symbols];
   await db.transaction(async (tx) => {
     await tx.update(schema.whitelist).set({ active: false });
-    for (const symbol of symbols) {
+    for (const symbol of symbolsList) {
+      if (!symbol || typeof symbol !== 'string') continue;
       const sym = symbol.toUpperCase();
       await tx.insert(schema.whitelist)
         .values({ symbol: sym, active: true, updatedAt: Date.now() })

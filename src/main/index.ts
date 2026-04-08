@@ -204,14 +204,12 @@ app.whenReady().then(async () => {
   )
 
   handleIPC('bot:getWhitelist', async () => await socketCall('getWhitelist'))
+  handleIPC('bot:getVersion', async () => {
+    const backendVersion = await socketCall('getVersion').catch(() => 'unknown')
+    return { frontend: app.getVersion(), backend: backendVersion }
+  })
   handleIPC('bot:saveWhitelist', async (_, symbols: string[]) => {
-    // Legacy: the UI passes an array, but headless updateWhitelist only updates single symbols 
-    // Usually it adds/removes one at a time. The UI is doing saveWhitelist([A,B,C]).
-    // We should loop over them or trust that UI is only adding the last one.
-    // For now we'll send updateWhitelist for the last added
-    if (symbols.length > 0) {
-      await socketCall('updateWhitelist', symbols[symbols.length - 1], true)
-    }
+    await socketCall('updateWhitelist', symbols)
     return true
   })
 

@@ -35,6 +35,7 @@ import {
 
 import { runBacktest } from './backtest';
 
+export const BACKEND_VERSION = '1.1.0';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
@@ -63,10 +64,16 @@ async function startHeadless() {
   botEvents.on('balance_update', (data) => io.emit('balance_update', data));
   botEvents.on('grid_levels_update', (data) => io.emit('grid_levels_update', data));
   botEvents.on('bot_log', (data) => io.emit('bot_log', data));
+
   botEvents.on('whitelist_update', (data) => io.emit('whitelist_update', data));
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Client connected: ${socket.id}`);
+
+    // Expose version so frontend can detect mismatches
+    socket.on('getVersion', (callback) => {
+      if (typeof callback === 'function') callback({ success: true, data: BACKEND_VERSION });
+    });
 
     // Read Operations
     socket.on('getSettings', async (callback) => {

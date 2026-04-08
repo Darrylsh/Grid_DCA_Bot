@@ -48,6 +48,7 @@ export interface IElectronAPI {
   // Whitelist
   getWhitelist: () => Promise<string[]>
   saveWhitelist: (symbols: string[]) => Promise<boolean>
+  getVersion: () => Promise<{ frontend: string; backend: string }>
 
   // Settings
   getSettings: () => Promise<Record<string, string>>

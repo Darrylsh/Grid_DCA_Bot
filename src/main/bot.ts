@@ -1063,9 +1063,10 @@ const connectWebSocket = async (): Promise<void> => {
 // ---------------------------------------------------------------------------
 // Reload Whitelist / Reconnect
 // ---------------------------------------------------------------------------
-const reloadWhitelist = async (newSymbols: string[]): Promise<void> => {
-  currentWhitelist = newSymbols.map((s) => (typeof s === 'object' ? (s as any).symbol : s))
-  console.log(`[WHITELIST] Reloaded: ${currentWhitelist.join(', ')}`)
+const reloadWhitelist = async (newSymbols: string[] | string): Promise<void> => {
+  const symbolsList = Array.isArray(newSymbols) ? newSymbols : [newSymbols];
+  currentWhitelist = symbolsList.map((s) => (typeof s === 'object' ? (s as any).symbol : s));
+  console.log(`[WHITELIST] Reloaded: ${currentWhitelist.join(', ')}`);
 
   if (wsClient) {
     try {

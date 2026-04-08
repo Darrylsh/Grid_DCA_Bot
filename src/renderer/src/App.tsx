@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Activity,
   Settings,
@@ -145,6 +145,7 @@ export default function App() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [versions, setVersions] = useState<{ frontend: string; backend: string } | null>(null)
 
   useEffect(() => {
     if (toast) {
@@ -200,6 +201,7 @@ export default function App() {
       refreshStats()
       statsInterval = setInterval(refreshStats, 10000)
       window.api.startBot()
+      window.api.getVersion?.().then((v: { frontend: string; backend: string }) => setVersions(v))
     }
     return () => {
       if (statsInterval) clearInterval(statsInterval)
@@ -225,22 +227,40 @@ export default function App() {
 
   const stripUSDT = (s: string) => (s ? s.replace('USDT', '') : s)
 
+  // Debounced save: fires 500ms after the last whitelist mutation.
+  // This prevents rapid add/remove sequences from sending multiple
+  // out-of-order socket calls that could overwrite the DB with a stale list.
+  const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const debouncedSaveWhitelist = useCallback((list: string[]) => {
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    saveDebounceRef.current = setTimeout(() => {
+      window.api.saveWhitelist(list)
+    }, 500)
+  }, [])
+
   const handleAddSymbol = () => {
     if (!newSymbol) return
     let s = newSymbol.toUpperCase()
     if (!s.endsWith('USDT')) s += 'USDT'
     if (whitelist.includes(s)) return
-    const list = [...whitelist, s]
-    setWhitelist(list)
-    window.api.saveWhitelist(list)
+    // Use functional updater so we always append to the true latest state
+    setWhitelist((prev) => {
+      const list = [...prev, s]
+      debouncedSaveWhitelist(list)
+      return list
+    })
     if (!btSymbol) setBtSymbol(s)
     setNewSymbol('')
   }
 
   const handleRemoveSymbol = (sym: string) => {
-    const list = whitelist.filter((w) => w !== sym)
-    setWhitelist(list)
-    window.api.saveWhitelist(list)
+    // Use functional updater so concurrent removals don't clobber each other
+    setWhitelist((prev) => {
+      const list = prev.filter((w) => w !== sym)
+      debouncedSaveWhitelist(list)
+      return list
+    })
 
     // Automatically refresh grid state by purging from local market data if no active position
     setMarketData((prev) => {
@@ -351,6 +371,19 @@ export default function App() {
                 <span>UPTIME: {uptime}</span>
               </div>
             )}
+            {versions && (
+              <div
+                className={`mt-1.5 flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
+                  versions.frontend !== versions.backend
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'bg-slate-700/50 text-slate-500'
+                }`}
+                title={`UI: v${versions.frontend}  |  Server: v${versions.backend}`}
+              >
+                {versions.frontend !== versions.backend ? '⚠ ' : ''}
+                UI v{versions.frontend} / Srv v{versions.backend}
+              </div>
+            )}
           </div>
         </div>
 
@@ -445,7 +478,7 @@ export default function App() {
                 {[
                   { label: 'Realized PNL', value: `$${stats.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: DollarSign, color: stats.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400', bg: 'bg-emerald-500/10' },
                   { label: 'Total Fees', value: `$${stats.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Receipt, color: 'text-amber-400', bg: 'bg-amber-500/10' },
-                  { label: 'Avg Grid ROI', value: `${(stats.avgRoi * 100).toFixed(2)}%`, icon: Percent, color: stats.avgRoi >= 0 ? 'text-blue-400' : 'text-rose-400', bg: 'bg-blue-500/10' },
+                  { label: 'Portfolio ROI', value: `${(((stats.totalPnl + stats.unrealizedPnl) / 727.40) * 100).toFixed(2)}%`, icon: Percent, color: (stats.totalPnl + stats.unrealizedPnl) >= 0 ? 'text-blue-400' : 'text-rose-400', bg: 'bg-blue-500/10' },
                   { label: 'Win Rate', value: `${stats.winRate.toFixed(1)}%`, icon: CheckCircle, color: 'text-purple-400', bg: 'bg-purple-500/10' },
                   { label: 'Fill Rate', value: `${stats.fillRate.toFixed(1)}%`, icon: Shuffle, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
                   { label: 'Unrealized PNL', value: `$${stats.unrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Zap, color: stats.unrealizedPnl >= 0 ? 'text-amber-400' : 'text-rose-400', bg: 'bg-amber-500/10' }

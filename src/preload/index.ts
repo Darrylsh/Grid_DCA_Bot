@@ -38,6 +38,7 @@ const api = {
   // ---- Whitelist ----
   getWhitelist: () => ipcRenderer.invoke('bot:getWhitelist'),
   saveWhitelist: (symbols: string[]) => ipcRenderer.invoke('bot:saveWhitelist', symbols),
+  getVersion: () => ipcRenderer.invoke('bot:getVersion'),
 
   // ---- Settings ----
   getSettings: () => ipcRenderer.invoke('bot:getSettings'),
