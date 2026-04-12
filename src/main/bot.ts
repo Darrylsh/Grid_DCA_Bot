@@ -27,9 +27,10 @@ import { sendTelegramMessage } from './telegram'
 // Types
 // ---------------------------------------------------------------------------
 interface GridState {
-  basePrice: number // Reference price for 3% up/down calculation
+  basePrice: number // Original entry price — grid buys trigger below this
   baseQuantity: number // Coin quantity of the base share
   baseEntryCost: number // USDT cost of the base share
+  isPaused?: boolean // Whether the bot is paused from buying down
 }
 
 interface GridLevel {
@@ -87,7 +88,8 @@ const currentSettings: Record<string, string> = {
   trading_mode: 'LIVE',
   capital_type: 'FIXED',
   capital_value: '100',
-  grid_step_percent: '3'
+  grid_step_percent: '3',
+  max_grid_levels: '10'
 }
 
 let currentMode = 'LIVE'
@@ -129,6 +131,11 @@ const getTrailingStopLevels = (): number => {
 const getTrailingStopPct = (): number => {
   const frac = parseFloat(currentSettings.trailing_stop_pct || '0.5')
   return (getGridStep() * (isNaN(frac) || frac <= 0 ? 0.5 : frac)) / 100
+}
+
+const getMaxGridLevels = (): number => {
+  const v = parseInt(currentSettings.max_grid_levels || '10')
+  return isNaN(v) || v <= 0 ? 10 : v
 }
 
 const getShareAmount = (): number => {
@@ -473,14 +480,14 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
   {
     const avgEntry =
       state.baseEntryCost > 0 ? state.baseEntryCost / state.baseQuantity : state.basePrice
-    const levelsUp = Math.log(state.basePrice / avgEntry) / Math.log(1 + stepMult)
+    const levelsUp = Math.log(currentPrice / avgEntry) / Math.log(1 + stepMult)
     const triggerLevels = getTrailingStopLevels()
     const stopPct = getTrailingStopPct()
     let ts = trailingStops[symbol]
 
     if (levelsUp >= triggerLevels) {
       if (!ts?.armed) {
-        // Arm the trail from the current price (re-arms on restart too)
+        // Arm the trail from the current price
         ts = { armed: true, trailHigh: currentPrice, stopPrice: currentPrice * (1 - stopPct) }
         trailingStops[symbol] = ts
         console.log(
@@ -495,7 +502,11 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
           `[TRAIL] ${symbol}: High → $${ts.trailHigh.toFixed(4)}, Stop → $${ts.stopPrice.toFixed(4)}`
         )
       }
-      // Fire if price drops to or below the stop
+    }
+
+    // CRITICAL: Check stop price SEPARATELY from the arming threshold.
+    // The stop must fire even if the price has dropped back below the trigger level.
+    if (ts?.armed) {
       if (currentPrice <= ts.stopPrice) {
         console.log(
           `[TRAIL] ${symbol}: STOP HIT @ $${currentPrice.toFixed(4)} (stop was $${ts.stopPrice.toFixed(4)}). Selling base share...`
@@ -504,12 +515,6 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
         sellBaseShare(symbol, 'TRAIL_STOP_SELL').catch(console.error)
         return // sellBaseShare calls broadcastMarketUpdate internally
       }
-    } else if (ts?.armed) {
-      // Fell back below trigger threshold (e.g. manual base change) — disarm
-      delete trailingStops[symbol]
-      console.log(
-        `[TRAIL] ${symbol}: Disarmed (levels up ${levelsUp.toFixed(2)} < threshold ${triggerLevels})`
-      )
     }
   }
 
@@ -520,28 +525,31 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
     lowestLevelBuyPrice !== null ? Math.min(state.basePrice, lowestLevelBuyPrice) : state.basePrice
   const nextBuyTrigger = referencePrice * (1 - stepMult)
 
-  // --- UP: Move base price up, no trade ---
-  if (currentPrice >= state.basePrice * (1 + stepMult)) {
-    const oldBase = state.basePrice
-    const newBase = currentPrice
-    state.basePrice = newBase
-    await saveGridState(symbol, state, currentMode)
-    console.log(
-      `[GRID UP] ${symbol}: Base price moved from $${oldBase.toFixed(4)} → $${newBase.toFixed(4)} (+${gridStep}%). No trade.`
-    )
-    broadcastMarketUpdate(symbol, currentPrice)
-    return
-  }
+  // NOTE: Base price no longer ratchets upward. It stays at the original entry.
+  // Trailing stop detection uses currentPrice vs avgEntry (above) instead.
 
   // --- DOWN: Buy a new grid level ---
   const cooldownKey = `${symbol}_${nextBuyTrigger.toFixed(6)}`
   const lastBuy = levelCooldowns[cooldownKey] || 0
   if (currentPrice <= nextBuyTrigger && Date.now() - lastBuy > LEVEL_COOLDOWN_MS) {
-    levelCooldowns[cooldownKey] = Date.now()
-    console.log(
-      `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
-    )
-    executeGridBuy(symbol, currentPrice).catch(console.error)
+    if (!state.isPaused) {
+      const maxLevels = getMaxGridLevels()
+      if (levels.length < maxLevels) {
+        levelCooldowns[cooldownKey] = Date.now()
+        console.log(
+          `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
+        )
+        executeGridBuy(symbol, currentPrice).catch(console.error)
+      } else {
+        console.log(
+          `[GRID DOWN LIMIT] ${symbol}: Hit max grid levels (${levels.length} >= ${maxLevels}). Skipping buy.`
+        )
+      }
+    } else {
+      console.log(
+        `[GRID DOWN PAUSED] ${symbol} hit trigger $${nextBuyTrigger.toFixed(4)} but is paused.`
+      )
+    }
   }
 
   broadcastMarketUpdate(symbol, currentPrice)
@@ -558,6 +566,18 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
   let pctFromBase: number | null = null
   if (state) {
     pctFromBase = ((currentPrice - state.basePrice) / state.basePrice) * 100
+  }
+
+  // Percentage to next grid sell level
+  let pctToGrid: number | null = null
+  if (levels.length > 0) {
+    const nextSell = levels
+      .map((l) => l.sellPrice)
+      .filter((sellPrice) => sellPrice > currentPrice)
+      .sort((a, b) => a - b)[0]
+    if (nextSell) {
+      pctToGrid = ((nextSell - currentPrice) / currentPrice) * 100
+    }
   }
 
   // Unrealized PnL from base share — based on true entry cost, not the floating base price
@@ -601,6 +621,7 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
     baseQuantity: state?.baseQuantity ?? null,
     baseEntryCost: state?.baseEntryCost ?? null,
     pctFromBase,
+    pctToGrid,
     gridLevels: levels.map((l) => ({
       id: l.id,
       buyPrice: l.buyPrice,
@@ -617,6 +638,7 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
     totalUnrealizedPnl: baseUnrealizedPnl + gridUnrealizedPnl,
     botStartTime,
     hasBaseShare: !!state,
+    isPaused: state?.isPaused ?? false,
     // Trailing stop state for UI display
     trailActive: trailingStops[symbol]?.armed ?? false,
     trailHigh: trailingStops[symbol]?.trailHigh ?? null,
@@ -676,7 +698,12 @@ const registerBaseShare = async (
   }
 
   const cost = fillPrice * fillQuantity
-  gridState[symbol] = { basePrice: fillPrice, baseQuantity: fillQuantity, baseEntryCost: cost }
+  gridState[symbol] = {
+    basePrice: fillPrice,
+    baseQuantity: fillQuantity,
+    baseEntryCost: cost,
+    isPaused: false
+  }
   await saveGridState(symbol, gridState[symbol], currentMode)
 
   console.log(
@@ -707,6 +734,9 @@ const registerBaseShare = async (
     reason: 'BASE_SHARE',
     timestamp: Date.now()
   })
+
+  // Reset trailing stop for this symbol on new base
+  delete trailingStops[symbol]
 
   broadcastMarketUpdate(symbol, lastPrices[symbol] || fillPrice)
 }
@@ -791,10 +821,11 @@ const sellBaseShare = async (
 // ---------------------------------------------------------------------------
 // Delete Base Share record (locally only, no trade)
 // ---------------------------------------------------------------------------
-export const deleteBaseShareLocally = (symbol: string): void => {
+export const deleteBaseShareLocally = async (symbol: string): Promise<void> => {
   delete gridState[symbol]
   delete trailingStops[symbol] // clear any active trail
-  console.log(`[BASE SHARE] ${symbol}: Local record deleted.`)
+  await deleteGridState(symbol, currentMode)
+  console.log(`[BASE SHARE] ${symbol}: Local record and DB state deleted.`)
   broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
 }
 
@@ -1248,6 +1279,19 @@ export const getFullGridState = (): Record<string, any> => {
     const state = gridState[symbol]
     const levels = gridLevels[symbol] || []
     const price = lastPrices[symbol] || 0
+
+    // Percentage to next grid sell level
+    let pctToGrid: number | null = null
+    if (levels.length > 0) {
+      const nextSell = levels
+        .map((l) => l.sellPrice)
+        .filter((sellPrice) => sellPrice > price)
+        .sort((a, b) => a - b)[0]
+      if (nextSell) {
+        pctToGrid = ((nextSell - price) / price) * 100
+      }
+    }
+
     result[symbol] = {
       symbol,
       hasBaseShare: !!state,
@@ -1256,6 +1300,7 @@ export const getFullGridState = (): Record<string, any> => {
       baseEntryCost: state?.baseEntryCost,
       currentPrice: price,
       pctFromBase: state ? ((price - state.basePrice) / state.basePrice) * 100 : null,
+      pctToGrid,
       gridLevels: levels,
       totalUnrealizedPnl: state
         ? (price - state.basePrice) * state.baseQuantity +
@@ -1379,4 +1424,14 @@ export const startBot = async (): Promise<void> => {
 }
 
 // Named exports for IPC compatibility
+export const togglePause = async (symbol: string): Promise<void> => {
+  const state = gridState[symbol]
+  if (state) {
+    state.isPaused = !state.isPaused
+    await saveGridState(symbol, state, currentMode)
+    broadcastMarketUpdate(symbol, lastPrices[symbol] || state.basePrice)
+    console.log(`[PAUSE TOGGLED] ${symbol}: ${state.isPaused ? 'PAUSED' : 'RESUMED'}`)
+  }
+}
+
 export { reloadWhitelist, registerBaseShare, sellBaseShare, clearGridLevels, updateSettingsLocally }

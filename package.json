@@ -1,6 +1,7 @@
 {
   "name": "algobot-desktop",
-  "version": "1.1.0",
+  "version": "1.6.0",
+  "expectedBackendVersion": "1.5.0",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -19,9 +20,12 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
-    "version:patch": "node scripts/bump-version.mjs patch",
-    "version:minor": "node scripts/bump-version.mjs minor",
-    "version:major": "node scripts/bump-version.mjs major"
+    "version:ui:patch": "node scripts/bump-version.mjs ui patch",
+    "version:ui:minor": "node scripts/bump-version.mjs ui minor",
+    "version:ui:major": "node scripts/bump-version.mjs ui major",
+    "version:srv:patch": "node scripts/bump-version.mjs srv patch",
+    "version:srv:minor": "node scripts/bump-version.mjs srv minor",
+    "version:srv:major": "node scripts/bump-version.mjs srv major"
   },
   "dependencies": {
     "@binance/connector": "^3.6.1",

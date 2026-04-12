@@ -34,7 +34,7 @@ process.stdout.write = (
   return originalStdoutWrite(chunk, encoding as BufferEncoding, callback)
 }
 
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -61,6 +61,7 @@ app.on('second-instance', () => {
 
 const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://192.168.10.42:3030'
 const socket = ioClient(SERVER_URL)
+let tray: Tray | null = null
 
 interface SocketResponse {
   success: boolean
@@ -77,6 +78,87 @@ const socketCall = (event: string, ...args: unknown[]): Promise<unknown> => {
       return reject(new Error(res.error || 'Unknown error'))
     })
   })
+}
+
+function createTray(mainWindow: BrowserWindow): void {
+  if (tray) return
+
+  const iconPath = icon
+  const trayIcon = nativeImage.createFromPath(iconPath)
+  tray = new Tray(trayIcon)
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show/Hide',
+      click: () => {
+        if (mainWindow.isVisible()) {
+          mainWindow.hide()
+        } else {
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: `Connection: ${socket.connected ? 'Connected' : 'Disconnected'}`,
+      enabled: false
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setToolTip(`AlgoBot Desktop - ${socket.connected ? 'Connected' : 'Disconnected'}`)
+  tray.setContextMenu(contextMenu)
+
+  tray.on('double-click', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide()
+    } else {
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return
+
+  const mainWindow = BrowserWindow.getAllWindows()[0]
+  if (!mainWindow) return
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show/Hide',
+      click: () => {
+        if (mainWindow.isVisible()) {
+          mainWindow.hide()
+        } else {
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: `Connection: ${socket.connected ? 'Connected' : 'Disconnected'}`,
+      enabled: false
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
 }
 
 function createWindow(settings: Record<string, string>): void {
@@ -108,6 +190,8 @@ function createWindow(settings: Record<string, string>): void {
       sandbox: false
     }
   })
+
+  createTray(mainWindow)
 
   if (windowState.isMaximized) mainWindow.maximize()
 
@@ -148,8 +232,28 @@ function createWindow(settings: Record<string, string>): void {
   socket.on('grid_levels_update', fwd('bot:gridLevelsUpdate'))
   socket.on('bot_log', fwd('bot:botLog'))
 
-  socket.on('connect', () => fwd('bot:connectionStatus')(true))
-  socket.on('disconnect', () => fwd('bot:connectionStatus')(false))
+  socket.on('connect', () => {
+    fwd('bot:connectionStatus')(true)
+    if (tray) {
+      tray.setToolTip('AlgoBot Desktop - Connected')
+      updateTrayMenu()
+    }
+  })
+  socket.on('disconnect', () => {
+    fwd('bot:connectionStatus')(false)
+    if (tray) {
+      tray.setToolTip('AlgoBot Desktop - Disconnected')
+      updateTrayMenu()
+    }
+  })
+
+  mainWindow.on('close', (event) => {
+    if (tray !== null) {
+      event.preventDefault()
+      mainWindow.hide()
+      return
+    }
+  })
 
   mainWindow.on('closed', () => {
     socket.off('market_update')
@@ -213,9 +317,15 @@ app.whenReady().then(async () => {
 
   handleIPC('bot:getGridState', async () => await socketCall('getFullGridState', undefined))
 
-  // Note: For deleting, headless doesn't typically provide local delete via remote right now
-  // We can just fallback to resolving true for legacy
-  handleIPC('bot:deleteBaseShare', async () => true)
+  handleIPC('bot:deleteBaseShare', async (_, symbol: string) => {
+    await socketCall('deleteBaseShare', symbol)
+    return true
+  })
+
+  handleIPC('bot:togglePause', async (_, symbol: string) => {
+    await socketCall('togglePause', symbol)
+    return true
+  })
 
   handleIPC('bot:manualTrade', async (_, symbol: string, side: 'BUY' | 'SELL') =>
     socketCall('executeManualTrade', symbol, side, 0, 0, 'MANUAL_TRADE')
@@ -249,7 +359,16 @@ app.whenReady().then(async () => {
   handleIPC('bot:getWhitelist', async () => await socketCall('getWhitelist'))
   handleIPC('bot:getVersion', async () => {
     const backendVersion = await socketCall('getVersion').catch(() => 'unknown')
-    return { frontend: app.getVersion(), backend: backendVersion }
+    let expectedBackend = 'unknown'
+    try {
+      const pkgPath = join(__dirname, '../../package.json')
+      // require('fs') could be used or we can just import fs. 
+      // It's safer to require inline if not imported at top
+      const pkg = JSON.parse(require('fs').readFileSync(pkgPath, 'utf8'))
+      expectedBackend = pkg.expectedBackendVersion || 'unknown'
+    } catch (e) {}
+    
+    return { frontend: app.getVersion(), backend: backendVersion, expectedBackend }
   })
   handleIPC('bot:saveWhitelist', async (_, symbols: string[]) => {
     await socketCall('updateWhitelist', symbols)
@@ -291,6 +410,14 @@ app.whenReady().then(async () => {
   })
 })
 
+app.on('before-quit', () => {
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
+})
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform === 'darwin') return
+  if (tray === null) app.quit()
 })

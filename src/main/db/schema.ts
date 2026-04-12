@@ -61,6 +61,7 @@ export const gridState = pgTable(
     basePrice: doublePrecision('base_price').notNull(),
     baseQuantity: doublePrecision('base_quantity').notNull(),
     baseEntryCost: doublePrecision('base_entry_cost').notNull(),
+    isPaused: boolean('is_paused').default(false),
     updatedAt: bigint('updated_at', { mode: 'number' }).default(
       sql`(extract(epoch from now()) * 1000)::bigint`
     )

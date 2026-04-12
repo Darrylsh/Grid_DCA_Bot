@@ -3,6 +3,8 @@
 **Created:** April 2026
 **Target Audience:** Future AI coding sessions / Antigravity Agent Context
 
+**Note:** For AI agent development rules and versioning protocols, see [AGENTS.md](./AGENTS.md)
+
 ## 1. Top-Level System Topology
 
 The Algobot application was recently decoupled from a monolithic desktop utility into a scalable headless architecture:

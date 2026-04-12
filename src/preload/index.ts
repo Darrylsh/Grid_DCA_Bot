@@ -21,6 +21,7 @@ const api = {
   clearGridLevels: (symbol: string) => ipcRenderer.invoke('bot:clearGridLevels', symbol),
   getGridState: () => ipcRenderer.invoke('bot:getGridState'),
   deleteBaseShare: (symbol: string) => ipcRenderer.invoke('bot:deleteBaseShare', symbol),
+  togglePause: (symbol: string) => ipcRenderer.invoke('bot:togglePause', symbol),
 
   // ---- Manual trade ----
   manualTrade: (symbol: string, side: string) =>

@@ -134,7 +134,7 @@ const ensureCandleData = async (
  * - Starts with a virtual base share at the OPEN of the first candle.
  * - Walks through each 1m candle. Uses the LOW to check for buy triggers
  *   and the HIGH to check for pending sell fills within a candle.
- * - +gridStep%: moves base price up (no trade)
+ * - Tracks levels-up from current price vs entry for trailing stop arming
  * - -gridStep%: buys a new grid level, places virtual sell at +gridStep%
  * - Any pending sell hit by the candle HIGH → filled at the sell price
  */
@@ -208,7 +208,7 @@ export async function runBacktest(
   const baseCost = shareCost
   totalSpent += shareCost
 
-  let basePrice = baseEntryPrice // Reference price (moves up)
+  let basePrice = baseEntryPrice // Reference price for grid buys (stays fixed at entry)
   const trades: BacktestTrade[] = [
     {
       side: 'BUY',
@@ -272,7 +272,7 @@ export async function runBacktest(
     // ---- TRAILING STOP CHECK (mirrors processTick in bot.ts) ----
     // Run before UP/DOWN grid logic so a triggered stop exits immediately
     if (!baseSoldByTrail) {
-      const levelsUp = Math.log(basePrice / baseEntryPrice) / Math.log(1 + gridStep)
+      const levelsUp = Math.log(close / baseEntryPrice) / Math.log(1 + gridStep)
       if (levelsUp >= trailingStopLevels) {
         if (!trailArmed) {
           trailArmed = true
@@ -353,12 +353,8 @@ export async function runBacktest(
     const referencePrice = lowestLevelBuy !== null ? Math.min(basePrice, lowestLevelBuy) : basePrice
     const nextBuyTrigger = referencePrice * (1 - gridStep)
 
-    // ---- Check UP: base price steps up in discrete gridStep increments ----
-    // Don't jump to the raw high — step up once per candle if threshold crossed
-    if (high >= basePrice * (1 + gridStep)) {
-      // Step base price up by exactly one gridStep from its current value
-      basePrice = basePrice * (1 + gridStep)
-    }
+    // NOTE: Base price no longer ratchets upward. It stays at the original entry.
+    // Trailing stop detection uses close vs baseEntryPrice (above) instead.
 
     // ---- Check DOWN: new grid buy if LOW hit the trigger ----
     if (low <= nextBuyTrigger) {

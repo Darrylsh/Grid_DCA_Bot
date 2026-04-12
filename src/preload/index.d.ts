@@ -23,6 +23,7 @@ export interface IElectronAPI {
   clearGridLevels: (symbol: string) => Promise<boolean>
   getGridState: () => Promise<Record<string, SymbolGridState>>
   deleteBaseShare: (symbol: string) => Promise<boolean>
+  togglePause: (symbol: string) => Promise<boolean>
 
   // Manual trade (quick base share register/sell)
   manualTrade: (symbol: string, side: string) => Promise<boolean>

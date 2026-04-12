@@ -87,6 +87,30 @@ export function SettingsTab(): React.ReactElement {
           </div>
         </div>
 
+        {/* Grid Buy Limits */}
+        <div className="grid grid-cols-2 gap-8">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Max Grid Levels
+            </label>
+            <input
+              type="number"
+              value={settings.max_grid_levels || '10'}
+              min="1"
+              max="100"
+              step="1"
+              onChange={(e) => updateSetting('max_grid_levels', e.target.value)}
+              className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <p className="text-xs text-slate-500 italic">
+              Maximum number of DCA grid levels allowed per symbol (excluding base).
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 opacity-0">
+            {/* Spacer */}
+          </div>
+        </div>
+
         {/* Trailing Stop */}
         <div className="grid grid-cols-2 gap-8">
           <div className="flex flex-col gap-2">

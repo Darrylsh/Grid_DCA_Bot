@@ -48,22 +48,31 @@ export function Sidebar(): React.ReactElement {
               <span>UPTIME: {uptime}</span>
             </div>
           )}
-          {versions && (
-            <div
-              className={`mt-1.5 flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
-                versions.frontend !== versions.backend
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'bg-slate-700/50 text-slate-500'
-              }`}
-              title={`UI: v${versions.frontend}  |  Server: v${versions.backend}`}
-            >
-              {versions.frontend !== versions.backend ? '⚠ ' : ''}
-              UI v{versions.frontend} / Srv v{versions.backend}
-            </div>
-          )}
+          {versions && (() => {
+            const backendParts = versions.backend.split('.')
+            const expectedParts = versions.expectedBackend?.split('.') || []
+            const isMismatch = (expectedParts.length >= 2 && expectedParts[0] !== 'unknown') 
+              ? (backendParts[0] !== expectedParts[0] || backendParts[1] !== expectedParts[1])
+              : versions.frontend !== versions.backend
+
+            return (
+              <div
+                className={`mt-1.5 flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
+                  isMismatch
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'bg-slate-700/50 text-slate-500'
+                }`}
+                title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${isMismatch ? `(Expected v${versions.expectedBackend})` : ''}`}
+              >
+                {isMismatch ? '⚠ ' : ''}
+                UI v{versions.frontend} / Srv v{versions.backend}
+              </div>
+            )
+          })()}
         </div>
       </div>
 
+      <div style={{ height: '16px' }} />
       <nav className="flex flex-col gap-2 mb-6">
         {[
           { id: 'dashboard', icon: BarChart2, label: 'Dashboard' },

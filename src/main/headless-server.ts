@@ -16,9 +16,11 @@ import {
   getCurrentMode,
   registerBaseShare,
   sellBaseShare,
+  deleteBaseShareLocally,
   clearGridLevels,
   wipeAllDataLocally,
-  getFullGridState
+  getFullGridState,
+  togglePause
 } from './bot'
 
 import {
@@ -35,7 +37,7 @@ import {
 
 import { runBacktest } from './backtest'
 
-export const BACKEND_VERSION = '1.1.0'
+export const BACKEND_VERSION = '1.5.0'
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
 
@@ -190,6 +192,15 @@ async function startHeadless(): Promise<void> {
       }
     })
 
+    socket.on('deleteBaseShare', async (symbol, callback) => {
+      try {
+        await deleteBaseShareLocally(symbol)
+        callback({ success: true })
+      } catch (err: unknown) {
+        callback({ success: false, error: err instanceof Error ? err.message : String(err) })
+      }
+    })
+
     socket.on('clearTradeHistory', async (mode, callback) => {
       try {
         await clearTradeHistory(mode || getCurrentMode())
@@ -215,6 +226,15 @@ async function startHeadless(): Promise<void> {
     socket.on('clearGridLevels', async (symbol, callback) => {
       try {
         await clearGridLevels(symbol)
+        callback({ success: true })
+      } catch (err: unknown) {
+        callback({ success: false, error: err instanceof Error ? err.message : String(err) })
+      }
+    })
+
+    socket.on('togglePause', async (symbol, callback) => {
+      try {
+        await togglePause(symbol)
         callback({ success: true })
       } catch (err: unknown) {
         callback({ success: false, error: err instanceof Error ? err.message : String(err) })

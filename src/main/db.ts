@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { eq, and, sql, desc, asc, sum, avg, count } from 'drizzle-orm'
+import { eq, and, sql, desc, asc, sum, avg, count, min } from 'drizzle-orm'
 import pg from 'pg'
 import * as schema from './db/schema'
 
@@ -54,9 +54,12 @@ const initDb = async (): Promise<void> => {
         base_price DOUBLE PRECISION NOT NULL,
         base_quantity DOUBLE PRECISION NOT NULL,
         base_entry_cost DOUBLE PRECISION NOT NULL,
+        is_paused BOOLEAN DEFAULT FALSE,
         updated_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000),
         PRIMARY KEY (symbol, mode)
       );
+      
+      ALTER TABLE grid_state ADD COLUMN IF NOT EXISTS is_paused BOOLEAN DEFAULT FALSE;
 
       CREATE TABLE IF NOT EXISTS grid_levels (
         id SERIAL PRIMARY KEY,
@@ -222,6 +225,7 @@ const getMetrics = async (
   winRate: number
   fillRate: number
   totalTrades: number
+  firstTradeTime?: number
 }> => {
   const [row] = await db
     .select({
@@ -231,7 +235,8 @@ const getMetrics = async (
       winCount: count(sql`CASE WHEN pnl > 0 AND side = 'SELL' THEN 1 END`),
       sellCount: count(sql`CASE WHEN side = 'SELL' THEN 1 END`),
       buyCount: count(sql`CASE WHEN side = 'BUY' THEN 1 END`),
-      totalTrades: count(sql`CASE WHEN side = 'SELL' THEN 1 END`)
+      totalTrades: count(sql`CASE WHEN side = 'SELL' THEN 1 END`),
+      firstTradeTime: min(schema.trades.timestamp)
     })
     .from(schema.trades)
     .where(eq(schema.trades.mode, mode))
@@ -253,7 +258,8 @@ const getMetrics = async (
     avgRoi,
     winRate,
     fillRate,
-    totalTrades
+    totalTrades,
+    firstTradeTime: row.firstTradeTime ? Number(row.firstTradeTime) : undefined
   }
 }
 
@@ -262,15 +268,23 @@ const getMetrics = async (
 // ---------------------------------------------------------------------------
 const getGridState = async (
   mode = 'LIVE'
-): Promise<Record<string, { basePrice: number; baseQuantity: number; baseEntryCost: number }>> => {
+): Promise<
+  Record<
+    string,
+    { basePrice: number; baseQuantity: number; baseEntryCost: number; isPaused?: boolean }
+  >
+> => {
   const rows = await db.select().from(schema.gridState).where(eq(schema.gridState.mode, mode))
-  const state: Record<string, { basePrice: number; baseQuantity: number; baseEntryCost: number }> =
-    {}
+  const state: Record<
+    string,
+    { basePrice: number; baseQuantity: number; baseEntryCost: number; isPaused?: boolean }
+  > = {}
   rows.forEach((r) => {
     state[r.symbol] = {
       basePrice: r.basePrice,
       baseQuantity: r.baseQuantity,
-      baseEntryCost: r.baseEntryCost
+      baseEntryCost: r.baseEntryCost,
+      isPaused: r.isPaused || false
     }
   })
   return state
@@ -278,7 +292,7 @@ const getGridState = async (
 
 const saveGridState = async (
   symbol: string,
-  data: { basePrice: number; baseQuantity: number; baseEntryCost: number },
+  data: { basePrice: number; baseQuantity: number; baseEntryCost: number; isPaused?: boolean },
   mode = 'LIVE'
 ): Promise<void> => {
   await db
@@ -288,7 +302,8 @@ const saveGridState = async (
       mode,
       basePrice: data.basePrice,
       baseQuantity: data.baseQuantity,
-      baseEntryCost: data.baseEntryCost
+      baseEntryCost: data.baseEntryCost,
+      isPaused: data.isPaused || false
     })
     .onConflictDoUpdate({
       target: [schema.gridState.symbol, schema.gridState.mode],
@@ -296,6 +311,7 @@ const saveGridState = async (
         basePrice: data.basePrice,
         baseQuantity: data.baseQuantity,
         baseEntryCost: data.baseEntryCost,
+        isPaused: data.isPaused !== undefined ? data.isPaused : sql`grid_state.is_paused`,
         updatedAt: Date.now()
       }
     })

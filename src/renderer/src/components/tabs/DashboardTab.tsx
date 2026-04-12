@@ -10,7 +10,9 @@ import {
   Layers,
   CheckCircle,
   Shuffle,
-  Receipt
+  Receipt,
+  Pause,
+  Play
 } from 'lucide-react'
 import React from 'react'
 import { useAppContext } from '@renderer/context/AppContext'
@@ -31,10 +33,21 @@ export function DashboardTab(): React.ReactElement {
     setLogs
   } = useAppContext()
 
+  const totalPnl = stats.totalPnl + stats.unrealizedPnl
+  const principal = 727.4
+  const roi = totalPnl / principal
+  const daysRunning = stats.firstTradeTime
+    ? Math.max(1, (Date.now() - stats.firstTradeTime) / (1000 * 60 * 60 * 24))
+    : 1
+  const safeRoi = Math.max(-0.999, roi)
+  const apyFraction = Math.pow(1 + safeRoi, 365 / daysRunning) - 1
+  const apyPercent = apyFraction * 100
+  const annualProfit = apyFraction * principal
+
   return (
     <>
       {/* Stats Grid */}
-      <div className="grid grid-cols-6 gap-3 mb-8 text-[10px]">
+      <div className="grid grid-cols-7 gap-2 mb-8 text-[10px]">
         {[
           {
             label: 'Realized PNL',
@@ -52,10 +65,32 @@ export function DashboardTab(): React.ReactElement {
           },
           {
             label: 'Portfolio ROI',
-            value: `${(((stats.totalPnl + stats.unrealizedPnl) / 727.4) * 100).toFixed(2)}%`,
+            value: `${(roi * 100).toFixed(2)}%`,
             icon: Percent,
-            color: stats.totalPnl + stats.unrealizedPnl >= 0 ? 'text-blue-400' : 'text-rose-400',
+            color: totalPnl >= 0 ? 'text-blue-400' : 'text-rose-400',
             bg: 'bg-blue-500/10'
+          },
+          {
+            label: 'Projected APY',
+            value: (
+              <div className="flex flex-col">
+                <span>
+                  {apyPercent > 0 ? '+' : ''}
+                  {apyPercent.toLocaleString(undefined, { maximumFractionDigits: 1 })}%
+                </span>
+                <span className="text-[9px] opacity-60 font-normal">
+                  ≈ $
+                  {annualProfit.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                  })}
+                  /yr
+                </span>
+              </div>
+            ),
+            icon: TrendingUp,
+            color: apyPercent >= 0 ? 'text-indigo-400' : 'text-rose-400',
+            bg: 'bg-indigo-500/10'
           },
           {
             label: 'Win Rate',
@@ -119,6 +154,7 @@ export function DashboardTab(): React.ReactElement {
                 <th className="p-4 font-medium">Current Price</th>
                 <th className="p-4 font-medium">Base Price</th>
                 <th className="p-4 font-medium">% From Base</th>
+                <th className="p-4 font-medium">% to Grid</th>
                 <th className="p-4 font-medium">Grid Levels</th>
                 <th className="p-4 font-medium text-amber-400">Current PnL</th>
                 <th className="p-4 font-medium text-emerald-400">Total PnL</th>
@@ -128,7 +164,7 @@ export function DashboardTab(): React.ReactElement {
             <tbody className="divide-y divide-slate-700/50">
               {Object.values(marketData).length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={9} className="p-8 text-center text-slate-500">
                     <div className="flex flex-col items-center gap-3">
                       <RotateCcw size={32} className="animate-spin text-slate-600" />
                       Waiting for market data streams...
@@ -195,6 +231,15 @@ export function DashboardTab(): React.ReactElement {
                           )}
                         </td>
                         <td className="p-4">
+                          {row.pctToGrid != null ? (
+                            <span className="flex items-center gap-1 font-mono font-bold text-indigo-400">
+                              +{row.pctToGrid.toFixed(2)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-600">-</span>
+                          )}
+                        </td>
+                        <td className="p-4">
                           {levels.length > 0 ? (
                             <div className="flex flex-col gap-0.5">
                               <span className="font-bold text-indigo-400">
@@ -247,7 +292,20 @@ export function DashboardTab(): React.ReactElement {
                                 {registeringSymbol === row.symbol ? 'BUYING...' : 'SET BASE'}
                               </button>
                             ) : (
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 items-center">
+                                <button
+                                  onClick={async () => {
+                                    await window.api.togglePause(row.symbol)
+                                    setToast({
+                                      message: `${stripUSDT(row.symbol)} grid buying ${row.isPaused ? 'resumed' : 'paused'}`,
+                                      type: 'info'
+                                    })
+                                  }}
+                                  className={`p-1.5 rounded-lg transition-all border ${row.isPaused ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30' : 'bg-slate-700 text-slate-400 hover:text-amber-400 hover:bg-amber-400/10 border-slate-600'}`}
+                                  title={row.isPaused ? 'Resume Buying' : 'Pause Buying'}
+                                >
+                                  {row.isPaused ? <Play size={14} /> : <Pause size={14} />}
+                                </button>
                                 <button
                                   onClick={() => {
                                     if (

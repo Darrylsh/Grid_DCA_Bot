@@ -40,6 +40,7 @@ export interface SymbolGridState {
   baseEntryCost?: number
   currentPrice: number
   pctFromBase?: number
+  pctToGrid?: number
   gridLevels: GridLevel[]
   totalUnrealizedPnl: number
   trailActive?: boolean
@@ -47,6 +48,7 @@ export interface SymbolGridState {
   trailStopPrice?: number
   activeSharePnl?: number // PnL for the active base share
   botStartTime?: number // When the bot started (from market update)
+  isPaused?: boolean // Whether the grid bot is paused from buying down
 }
 
 /**
@@ -77,6 +79,7 @@ export interface Stats {
   fillRate: number
   totalTrades: number
   unrealizedPnl: number
+  firstTradeTime?: number
 }
 
 // ==================== BACKTEST TYPES ====================
@@ -185,6 +188,7 @@ export interface Toast {
 export interface VersionInfo {
   frontend: string
   backend: string
+  expectedBackend: string
 }
 
 // ==================== UTILITY TYPES ====================
