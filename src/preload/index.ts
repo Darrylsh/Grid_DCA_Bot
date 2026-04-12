@@ -19,6 +19,7 @@ const api = {
     ipcRenderer.invoke('bot:registerBaseShare', symbol, price, quantity),
   sellBaseShare: (symbol: string) => ipcRenderer.invoke('bot:sellBaseShare', symbol),
   clearGridLevels: (symbol: string) => ipcRenderer.invoke('bot:clearGridLevels', symbol),
+  sellLowestGridLevel: (symbol: string) => ipcRenderer.invoke('bot:sellLowestGridLevel', symbol),
   getGridState: () => ipcRenderer.invoke('bot:getGridState'),
   deleteBaseShare: (symbol: string) => ipcRenderer.invoke('bot:deleteBaseShare', symbol),
   togglePause: (symbol: string) => ipcRenderer.invoke('bot:togglePause', symbol),

@@ -326,6 +326,33 @@ export function DashboardTab(): React.ReactElement {
                                 >
                                   Sell Base
                                 </button>
+                                {levels.length > 0 && (
+                                  <button
+                                    onClick={async () => {
+                                      const lowest = [...levels].sort(
+                                        (a, b) => a.sellPrice - b.sellPrice
+                                      )[0]
+                                      if (
+                                        window.confirm(
+                                          `Sell lowest grid level for ${stripUSDT(row.symbol)}?\n` +
+                                            `Target: $${lowest.sellPrice.toFixed(4)}\n` +
+                                            `Quantity: ${lowest.quantity.toFixed(6)}\n` +
+                                            `Market sell at current price (~$${row.currentPrice?.toFixed(4)})`
+                                        )
+                                      ) {
+                                        await window.api.sellLowestGridLevel(row.symbol)
+                                        setToast({
+                                          message: `Grid level sold for ${stripUSDT(row.symbol)}`,
+                                          type: 'success'
+                                        })
+                                        window.api.getGridState().then(setMarketData)
+                                      }
+                                    }}
+                                    className="px-2 py-1.5 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 rounded-lg text-[10px] font-bold transition-colors border border-amber-500/20"
+                                  >
+                                    GRID SELL
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => handleDeleteBaseShare(row.symbol)}
                                   className="p-1.5 bg-slate-700 text-slate-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-all border border-slate-600"

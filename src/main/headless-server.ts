@@ -20,7 +20,8 @@ import {
   clearGridLevels,
   wipeAllDataLocally,
   getFullGridState,
-  togglePause
+  togglePause,
+  sellLowestGridLevel
 } from './bot'
 
 import {
@@ -37,7 +38,7 @@ import {
 
 import { runBacktest } from './backtest'
 
-export const BACKEND_VERSION = '1.5.0'
+export const BACKEND_VERSION = '1.6.0'
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
 
@@ -226,6 +227,15 @@ async function startHeadless(): Promise<void> {
     socket.on('clearGridLevels', async (symbol, callback) => {
       try {
         await clearGridLevels(symbol)
+        callback({ success: true })
+      } catch (err: unknown) {
+        callback({ success: false, error: err instanceof Error ? err.message : String(err) })
+      }
+    })
+
+    socket.on('sellLowestGridLevel', async (symbol, callback) => {
+      try {
+        await sellLowestGridLevel(symbol)
         callback({ success: true })
       } catch (err: unknown) {
         callback({ success: false, error: err instanceof Error ? err.message : String(err) })

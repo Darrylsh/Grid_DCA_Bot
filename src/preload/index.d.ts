@@ -21,6 +21,7 @@ export interface IElectronAPI {
   registerBaseShare: (symbol: string, price: number, quantity: number) => Promise<boolean>
   sellBaseShare: (symbol: string) => Promise<boolean>
   clearGridLevels: (symbol: string) => Promise<boolean>
+  sellLowestGridLevel: (symbol: string) => Promise<boolean>
   getGridState: () => Promise<Record<string, SymbolGridState>>
   deleteBaseShare: (symbol: string) => Promise<boolean>
   togglePause: (symbol: string) => Promise<boolean>

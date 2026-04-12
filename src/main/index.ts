@@ -315,6 +315,11 @@ app.whenReady().then(async () => {
     return true
   })
 
+  handleIPC('bot:sellLowestGridLevel', async (_, symbol: string) => {
+    await socketCall('sellLowestGridLevel', symbol)
+    return true
+  })
+
   handleIPC('bot:getGridState', async () => await socketCall('getFullGridState', undefined))
 
   handleIPC('bot:deleteBaseShare', async (_, symbol: string) => {
@@ -362,12 +367,12 @@ app.whenReady().then(async () => {
     let expectedBackend = 'unknown'
     try {
       const pkgPath = join(__dirname, '../../package.json')
-      // require('fs') could be used or we can just import fs. 
+      // require('fs') could be used or we can just import fs.
       // It's safer to require inline if not imported at top
       const pkg = JSON.parse(require('fs').readFileSync(pkgPath, 'utf8'))
       expectedBackend = pkg.expectedBackendVersion || 'unknown'
     } catch (e) {}
-    
+
     return { frontend: app.getVersion(), backend: backendVersion, expectedBackend }
   })
   handleIPC('bot:saveWhitelist', async (_, symbols: string[]) => {

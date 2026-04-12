@@ -19,7 +19,8 @@ import {
   getAllActiveGridLevels,
   saveGridLevel,
   markGridLevelFilled,
-  deleteAllGridLevels
+  deleteAllGridLevels,
+  updateGridLevelOrderId
 } from './db'
 import { sendTelegramMessage } from './telegram'
 
@@ -872,6 +873,83 @@ const clearGridLevels = async (symbol: string): Promise<void> => {
 }
 
 // ---------------------------------------------------------------------------
+// Sell lowest grid level at market price
+// ---------------------------------------------------------------------------
+const sellLowestGridLevel = async (symbol: string): Promise<void> => {
+  const levels = gridLevels[symbol] || []
+  if (levels.length === 0) {
+    throw new Error(`No grid levels for ${symbol}`)
+  }
+
+  // Find lowest sell price (closest target)
+  const lowestLevel = [...levels].sort((a, b) => a.sellPrice - b.sellPrice)[0]
+
+  // Cancel Binance limit order if LIVE mode
+  if (currentMode === 'LIVE' && lowestLevel.binanceSellOrderId) {
+    try {
+      await client.cancelOrder(symbol, { orderId: lowestLevel.binanceSellOrderId })
+      console.log(`[GRID] Cancelled order ${lowestLevel.binanceSellOrderId} for ${symbol}`)
+    } catch (e: any) {
+      console.error(`[GRID] Failed to cancel order ${lowestLevel.binanceSellOrderId}:`, e.message)
+      // Continue anyway, the order might already be filled or cancelled
+    }
+  }
+
+  // Get current price for market sell
+  const currentPrice = lastPrices[symbol] || lowestLevel.sellPrice
+  let fillPrice = currentPrice
+
+  if (currentMode === 'LIVE') {
+    const filter = symbolFilters[symbol]
+    const qty = roundToStep(lowestLevel.quantity, filter?.stepSize || 0)
+    try {
+      const result = (await client.newOrder(symbol, 'SELL', 'MARKET', {
+        quantity: qty.toString()
+      })) as any
+      const fills = result.data.fills || []
+      if (fills.length > 0) {
+        const totalQty = fills.reduce((s: number, f: any) => s + parseFloat(f.qty), 0)
+        const totalCost = fills.reduce(
+          (s: number, f: any) => s + parseFloat(f.price) * parseFloat(f.qty),
+          0
+        )
+        fillPrice = totalCost / totalQty
+      }
+      fetchBalances()
+    } catch (marketError: any) {
+      console.error(`[GRID SELL FAILED] ${symbol}: Market sell failed:`, marketError.message)
+      // Attempt to recreate limit order at original price
+      if (currentMode === 'LIVE') {
+        try {
+          const filter = symbolFilters[symbol]
+          const qty = roundToStep(lowestLevel.quantity, filter?.stepSize || 0)
+          const price = roundToStep(lowestLevel.sellPrice, filter?.tickSize || 0)
+          const result = (await client.newOrder(symbol, 'SELL', 'LIMIT', {
+            quantity: qty.toString(),
+            price: price.toString(),
+            timeInForce: 'GTC'
+          })) as any
+          const orderId = result.data.orderId.toString()
+          await updateGridLevelOrderId(lowestLevel.id, orderId)
+          lowestLevel.binanceSellOrderId = orderId
+          console.log(`[GRID] Recreated limit order ${orderId} for ${symbol} @ $${price}`)
+          throw new Error(`Market sell failed, recreated limit order ${orderId} at original price`)
+        } catch (recreateError: any) {
+          console.error(`[GRID] Failed to recreate limit order:`, recreateError.message)
+          throw new Error(
+            `Market sell failed and couldn't recreate limit order: ${recreateError.message}`
+          )
+        }
+      }
+      throw marketError
+    }
+  }
+
+  // Mark as filled and update state
+  await handleGridSellFill(symbol, lowestLevel, fillPrice)
+}
+
+// ---------------------------------------------------------------------------
 // User Data Stream — detect live limit sell fills
 // Direct REST + raw WebSocket (bypasses connector's broken listen key path)
 // ---------------------------------------------------------------------------
@@ -1434,4 +1512,11 @@ export const togglePause = async (symbol: string): Promise<void> => {
   }
 }
 
-export { reloadWhitelist, registerBaseShare, sellBaseShare, clearGridLevels, updateSettingsLocally }
+export {
+  reloadWhitelist,
+  registerBaseShare,
+  sellBaseShare,
+  clearGridLevels,
+  updateSettingsLocally,
+  sellLowestGridLevel
+}
