@@ -170,6 +170,12 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ### Remaining Backend Considerations:
 
+#### Code Organization
+
+- **Monolithic bot.ts**: 1700+ lines – consider splitting into modular components (exchange logic, grid management, state management)
+- **Separation of concerns**: Combine business logic, exchange API interactions, and database operations in single file
+- **Module extraction**: Extract exchange client, grid engine, state manager into separate modules
+
 #### Code Quality
 
 - **Type safety**: Ensure all `any` types are eliminated in backend code
@@ -193,6 +199,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 | File                          | Lines                                         | Issue                         | Status                                                   |
 | ----------------------------- | --------------------------------------------- | ----------------------------- | -------------------------------------------------------- |
 | `src/main/bot.ts`             | Multiple                                      | Division by zero risks        | ✅ **Fixed** - Added safeDivide() and getAvgEntryPrice() |
+| `src/main/bot.ts`             | 1703                                          | Monolithic file size          | ⏳ Pending - Consider modular refactoring                |
 | `src/main/db/schema.ts`       | 40                                            | Missing index on trades.mode  | ✅ **Fixed** - Added idx_trades_mode index               |
 | `src/main/bot.ts`             | broadcastMarketUpdate() vs getFullGridState() | Inconsistent PnL calculations | ✅ **Fixed** - Unified using getAvgEntryPrice()          |
 | `src/main/headless-server.ts` | 41                                            | Version update                | ✅ **Fixed** - Bumped to 1.8.0                           |
@@ -296,6 +303,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 4. **Add comprehensive error logging** - For exchange API failures and edge cases
 5. **Implement database migrations** - Schema change management system
 6. **Add health check endpoints** - For remote backend monitoring
+7. **Modularize bot.ts monolithic structure** - Split 1700+ line file into focused modules
 
 ### Medium Priority:
 
