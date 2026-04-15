@@ -146,6 +146,11 @@ export async function runBacktest(
   gridStepPercent: number,
   trailingStopLevels = 3,
   trailingStopPct = 0.5,
+  dynamicGridEnabled = false,
+  momentumWindow = 10,
+  momentumThresholdPct = -0.5,
+  reboundThresholdPct = 0.25,
+  dynamicModeTimeoutMin = 30,
   onUpdate?: (
     progress: number,
     results: BacktestResults | { status: string; message?: string }
@@ -159,7 +164,10 @@ export async function runBacktest(
   const endMs = new Date(endDate + 'T23:59:59Z').getTime()
 
   console.log(
-    `[BACKTEST] ${symbol} | ${startDate} → ${endDate} | Share: $${shareCost} | Grid: ${gridStepPercent}%`
+    `[BACKTEST] ${symbol} | ${startDate} → ${endDate} | Share: $${shareCost} | Grid: ${gridStepPercent}%` +
+      (dynamicGridEnabled
+        ? ` | Dynamic Grid ON (window=${momentumWindow}, threshold=${momentumThresholdPct}%, rebound=${reboundThresholdPct}%, timeout=${dynamicModeTimeoutMin}min)`
+        : '')
   )
 
   // ---- 1. Ensure candle data is available ----
@@ -229,6 +237,15 @@ export async function runBacktest(
   let gridLevelCount = 0
   let totalFeesPaid = baseCost * FEE_RATE
 
+  // Dynamic grid state
+  const priceHistory: number[] = []
+  let delayedBuyState: {
+    active: boolean
+    triggerPrice: number
+    lowSinceTrigger: number
+    triggeredAt: number
+  } | null = null
+
   // Trailing stop state (mirrors live bot)
   const stopDistance = gridStep * trailingStopPct // e.g. 2% * 0.5 = 0.01
   let trailArmed = false
@@ -260,6 +277,14 @@ export async function runBacktest(
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i]
     const { openTime, high, low, close } = candle
+
+    // Update price history for momentum detection
+    if (dynamicGridEnabled) {
+      priceHistory.push(close)
+      if (priceHistory.length > momentumWindow) {
+        priceHistory.shift()
+      }
+    }
 
     // Progress chart sampling
     if (i - lastChartSample >= CHART_SAMPLE) {
@@ -313,6 +338,67 @@ export async function runBacktest(
       }
     }
 
+    // --- DELAYED BUY REBOUND CHECK ---
+    if (delayedBuyState && delayedBuyState.active) {
+      // Update lowest price since trigger
+      if (low < delayedBuyState.lowSinceTrigger) {
+        delayedBuyState.lowSinceTrigger = low
+      }
+
+      // Check for rebound using candle high (price could have touched rebound level intra-candle)
+      const reboundPrice = delayedBuyState.lowSinceTrigger * (1 + reboundThresholdPct / 100)
+      if (high >= reboundPrice) {
+        // Verify still below original trigger price
+        const fillPrice = reboundPrice
+        if (fillPrice <= delayedBuyState.triggerPrice) {
+          // Buy at rebound price
+          const buyFee = shareCost * FEE_RATE
+          const qty = (shareCost / fillPrice) * (1 - FEE_RATE)
+          const sellTarget = fillPrice * (1 + gridStep)
+          const levelId = nextLevelId++
+
+          totalSpent += shareCost
+          totalFeesPaid += buyFee
+          gridLevelCount++
+
+          pendingLevels.push({
+            id: levelId,
+            buyPrice: fillPrice,
+            sellPrice: sellTarget,
+            qty,
+            cost: shareCost,
+            status: 'PENDING'
+          })
+
+          trades.push({
+            side: 'BUY',
+            price: fillPrice,
+            quantity: qty,
+            cost: shareCost,
+            fee: buyFee,
+            timestamp: new Date(openTime).toISOString(),
+            reason: 'DYNAMIC_GRID_BUY',
+            pnl: null,
+            roi: null,
+            levelId
+          })
+        }
+        // Cancel delay regardless of whether we bought (rebound above trigger cancels)
+        delayedBuyState = null
+      }
+
+      // Safety timeout
+      if (
+        delayedBuyState &&
+        openTime - delayedBuyState.triggeredAt > dynamicModeTimeoutMin * 60 * 1000
+      ) {
+        delayedBuyState = null
+      }
+
+      // Skip normal grid logic while in delayed mode
+      continue
+    }
+
     // ---- Check if pending limit sells are hit by this candle's HIGH ----
     for (const level of [...pendingLevels]) {
       if (high >= level.sellPrice) {
@@ -358,38 +444,58 @@ export async function runBacktest(
 
     // ---- Check DOWN: new grid buy if LOW hit the trigger ----
     if (low <= nextBuyTrigger) {
-      // Buy at the trigger price (simulate limit buy)
-      const buyPrice = nextBuyTrigger
-      const buyFee = shareCost * FEE_RATE
-      const qty = (shareCost / buyPrice) * (1 - FEE_RATE)
-      const sellTarget = buyPrice * (1 + gridStep)
-      const levelId = nextLevelId++
+      // --- DYNAMIC GRID MOMENTUM CHECK ---
+      let shouldDelay = false
+      if (dynamicGridEnabled) {
+        if (priceHistory.length >= momentumWindow) {
+          const oldestPrice = priceHistory[0]
+          const newestPrice = priceHistory[priceHistory.length - 1]
+          const momentumPct = ((newestPrice - oldestPrice) / oldestPrice) * 100
+          if (momentumPct <= momentumThresholdPct) {
+            shouldDelay = true
+            delayedBuyState = {
+              active: true,
+              triggerPrice: nextBuyTrigger,
+              lowSinceTrigger: low,
+              triggeredAt: openTime
+            }
+          }
+        }
+      }
+      if (!shouldDelay) {
+        // Buy at the trigger price (simulate limit buy)
+        const buyPrice = nextBuyTrigger
+        const buyFee = shareCost * FEE_RATE
+        const qty = (shareCost / buyPrice) * (1 - FEE_RATE)
+        const sellTarget = buyPrice * (1 + gridStep)
+        const levelId = nextLevelId++
 
-      totalSpent += shareCost
-      totalFeesPaid += buyFee
-      gridLevelCount++
+        totalSpent += shareCost
+        totalFeesPaid += buyFee
+        gridLevelCount++
 
-      pendingLevels.push({
-        id: levelId,
-        buyPrice,
-        sellPrice: sellTarget,
-        qty,
-        cost: shareCost,
-        status: 'PENDING'
-      })
+        pendingLevels.push({
+          id: levelId,
+          buyPrice,
+          sellPrice: sellTarget,
+          qty,
+          cost: shareCost,
+          status: 'PENDING'
+        })
 
-      trades.push({
-        side: 'BUY',
-        price: buyPrice,
-        quantity: qty,
-        cost: shareCost,
-        fee: buyFee,
-        timestamp: new Date(openTime).toISOString(),
-        reason: 'GRID_BUY',
-        pnl: null,
-        roi: null,
-        levelId
-      })
+        trades.push({
+          side: 'BUY',
+          price: buyPrice,
+          quantity: qty,
+          cost: shareCost,
+          fee: buyFee,
+          timestamp: new Date(openTime).toISOString(),
+          reason: 'GRID_BUY',
+          pnl: null,
+          roi: null,
+          levelId
+        })
+      }
     }
 
     // ---- Streaming progress update (every 10%) ----

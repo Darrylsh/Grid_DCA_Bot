@@ -38,7 +38,7 @@ import {
 
 import { runBacktest } from './backtest'
 
-export const BACKEND_VERSION = '1.6.0'
+export const BACKEND_VERSION = '1.7.0'
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
 
@@ -268,6 +268,11 @@ async function startHeadless(): Promise<void> {
         const s = await getSettings()
         const trailLevels = parseInt(s.trailing_stop_levels || '3')
         const trailPct = parseFloat(s.trailing_stop_pct || '0.5')
+        const dynamicGridEnabled = s.dynamic_grid_enabled === 'true'
+        const momentumWindow = parseInt(s.momentum_window || '10')
+        const momentumThresholdPct = parseFloat(s.momentum_threshold_pct || '-0.5')
+        const reboundThresholdPct = parseFloat(s.rebound_threshold_pct || '0.25')
+        const dynamicModeTimeoutMin = parseInt(s.dynamic_mode_timeout_min || '30')
         const results = await runBacktest(
           symbol,
           start,
@@ -276,6 +281,11 @@ async function startHeadless(): Promise<void> {
           gridStep,
           trailLevels,
           trailPct,
+          dynamicGridEnabled,
+          momentumWindow,
+          momentumThresholdPct,
+          reboundThresholdPct,
+          dynamicModeTimeoutMin,
           (progress, interimResults) => {
             socket.emit('bt:progress', progress)
             if (interimResults) socket.emit('bt:update', interimResults)

@@ -57,6 +57,13 @@ interface TrailingStop {
   stopPrice: number // trailHigh * (1 - stopPct)
 }
 
+interface DelayedBuyState {
+  active: boolean
+  triggerPrice: number // Original grid trigger price where delay started
+  lowSinceTrigger: number // Lowest price observed since delay
+  triggeredAt: number // Timestamp for timeout
+}
+
 // ---------------------------------------------------------------------------
 // Binance Client
 // ---------------------------------------------------------------------------
@@ -90,7 +97,12 @@ const currentSettings: Record<string, string> = {
   capital_type: 'FIXED',
   capital_value: '100',
   grid_step_percent: '3',
-  max_grid_levels: '10'
+  max_grid_levels: '10',
+  dynamic_grid_enabled: 'false',
+  momentum_window: '10',
+  momentum_threshold_pct: '-0.5',
+  rebound_threshold_pct: '0.25',
+  dynamic_mode_timeout_min: '30'
 }
 
 let currentMode = 'LIVE'
@@ -107,6 +119,10 @@ const LEVEL_COOLDOWN_MS = 5000 // 5 second cooldown after a grid purchase
 
 // Trailing stop state (in-memory; resets on restart, re-arms automatically if still N levels up)
 const trailingStops: Record<string, TrailingStop> = {}
+
+// Dynamic grid momentum state
+const priceHistories: Record<string, number[]> = {} // Last N prices per symbol for momentum calculation
+const delayedBuyStates: Record<string, DelayedBuyState> = {}
 
 // Telegram Notification Cooldowns
 let lastLowBnbNotified = 0
@@ -142,6 +158,32 @@ const getMaxGridLevels = (): number => {
 const getShareAmount = (): number => {
   const val = parseFloat(currentSettings.capital_value || '100')
   return isNaN(val) || val <= 0 ? 100 : val
+}
+
+const getDynamicGridEnabled = (): boolean => {
+  const val = currentSettings.dynamic_grid_enabled || 'false'
+  return val.toLowerCase() === 'true'
+}
+
+const getMomentumWindow = (): number => {
+  const v = parseInt(currentSettings.momentum_window || '10')
+  return isNaN(v) || v <= 0 ? 10 : v
+}
+
+const getMomentumThresholdPct = (): number => {
+  const v = parseFloat(currentSettings.momentum_threshold_pct || '-0.5')
+  return isNaN(v) || v >= 0 ? -0.5 : v // Must be negative
+}
+
+const getReboundThresholdPct = (): number => {
+  const v = parseFloat(currentSettings.rebound_threshold_pct || '0.25')
+  return isNaN(v) || v <= 0 ? 0.25 : v
+}
+
+const getDynamicModeTimeoutMs = (): number => {
+  const minutes = parseInt(currentSettings.dynamic_mode_timeout_min || '30')
+  const safeMinutes = isNaN(minutes) || minutes <= 0 ? 30 : minutes
+  return safeMinutes * 60 * 1000
 }
 
 const roundToStep = (value: number, step: number): number => {
@@ -455,6 +497,16 @@ const handleGridSellFill = async (
 const processTick = async (symbol: string, currentPrice: number): Promise<void> => {
   lastPrices[symbol] = currentPrice
 
+  // Update price history for momentum detection
+  if (getDynamicGridEnabled()) {
+    if (!priceHistories[symbol]) priceHistories[symbol] = []
+    priceHistories[symbol].push(currentPrice)
+    const window = getMomentumWindow()
+    if (priceHistories[symbol].length > window) {
+      priceHistories[symbol].shift()
+    }
+  }
+
   const state = gridState[symbol]
   const levels = gridLevels[symbol] || []
 
@@ -519,6 +571,48 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
     }
   }
 
+  // --- DELAYED BUY REBOUND CHECK ---
+  const delayedState = delayedBuyStates[symbol]
+  if (delayedState?.active) {
+    // Update lowest price since trigger
+    if (currentPrice < delayedState.lowSinceTrigger) {
+      delayedState.lowSinceTrigger = currentPrice
+    }
+
+    // Check for rebound
+    const reboundPrice = delayedState.lowSinceTrigger * (1 + getReboundThresholdPct() / 100)
+    if (currentPrice >= reboundPrice) {
+      // Verify still below original trigger price
+      if (currentPrice <= delayedState.triggerPrice) {
+        // Buy at market price
+        console.log(`[DYNAMIC] ${symbol}: Rebound detected. Buying at $${currentPrice.toFixed(4)}`)
+        if (!state.isPaused && levels.length < getMaxGridLevels()) {
+          const cooldownKey = `${symbol}_${currentPrice.toFixed(6)}`
+          if (Date.now() - (levelCooldowns[cooldownKey] || 0) > LEVEL_COOLDOWN_MS) {
+            levelCooldowns[cooldownKey] = Date.now()
+            executeGridBuy(symbol, currentPrice).catch(console.error)
+          }
+        }
+      } else {
+        // Price rebounded above trigger - cancel delay
+        console.log(
+          `[DYNAMIC] ${symbol}: Rebound above trigger (${currentPrice.toFixed(4)} > ${delayedState.triggerPrice.toFixed(4)}). Canceling delay.`
+        )
+      }
+      delete delayedBuyStates[symbol]
+    }
+
+    // Safety timeout
+    if (Date.now() - delayedState.triggeredAt > getDynamicModeTimeoutMs()) {
+      console.log(`[DYNAMIC] ${symbol}: Timeout. Resuming normal grid.`)
+      delete delayedBuyStates[symbol]
+    }
+
+    // Skip normal grid logic while in delayed mode
+    broadcastMarketUpdate(symbol, currentPrice)
+    return
+  }
+
   // Determine the reference price for the next buy:
   // The next buy triggers at gridStep% BELOW whichever is lower: basePrice or the lowest current grid level buy
   const lowestLevelBuyPrice = levels.length > 0 ? Math.min(...levels.map((l) => l.buyPrice)) : null
@@ -536,11 +630,37 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
     if (!state.isPaused) {
       const maxLevels = getMaxGridLevels()
       if (levels.length < maxLevels) {
-        levelCooldowns[cooldownKey] = Date.now()
-        console.log(
-          `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
-        )
-        executeGridBuy(symbol, currentPrice).catch(console.error)
+        // --- DYNAMIC GRID MOMENTUM CHECK ---
+        let shouldDelay = false
+        if (getDynamicGridEnabled()) {
+          const window = getMomentumWindow()
+          const history = priceHistories[symbol]
+          if (history && history.length >= window) {
+            const oldestPrice = history[0]
+            const newestPrice = history[history.length - 1]
+            const momentumPct = ((newestPrice - oldestPrice) / oldestPrice) * 100
+            const threshold = getMomentumThresholdPct()
+            if (momentumPct <= threshold) {
+              shouldDelay = true
+              delayedBuyStates[symbol] = {
+                active: true,
+                triggerPrice: nextBuyTrigger,
+                lowSinceTrigger: currentPrice,
+                triggeredAt: Date.now()
+              }
+              console.log(
+                `[DYNAMIC] ${symbol}: Negative momentum ${momentumPct.toFixed(2)}% ≤ ${threshold.toFixed(2)}%. Delaying buy. Watching for rebound.`
+              )
+            }
+          }
+        }
+        if (!shouldDelay) {
+          levelCooldowns[cooldownKey] = Date.now()
+          console.log(
+            `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
+          )
+          executeGridBuy(symbol, currentPrice).catch(console.error)
+        }
       } else {
         console.log(
           `[GRID DOWN LIMIT] ${symbol}: Hit max grid levels (${levels.length} >= ${maxLevels}). Skipping buy.`
@@ -825,6 +945,8 @@ const sellBaseShare = async (
 export const deleteBaseShareLocally = async (symbol: string): Promise<void> => {
   delete gridState[symbol]
   delete trailingStops[symbol] // clear any active trail
+  delete priceHistories[symbol]
+  delete delayedBuyStates[symbol]
   await deleteGridState(symbol, currentMode)
   console.log(`[BASE SHARE] ${symbol}: Local record and DB state deleted.`)
   broadcastMarketUpdate(symbol, lastPrices[symbol] || 0)
@@ -841,7 +963,16 @@ export const wipeAllDataLocally = (): void => {
   for (const symbol in trailingStops) {
     delete trailingStops[symbol]
   }
-  console.log(`[BOT] All grid state, grid levels, and trailing stops cleared from memory.`)
+  // Clear dynamic grid state
+  for (const symbol in priceHistories) {
+    delete priceHistories[symbol]
+  }
+  for (const symbol in delayedBuyStates) {
+    delete delayedBuyStates[symbol]
+  }
+  console.log(
+    `[BOT] All grid state, grid levels, trailing stops, and dynamic grid state cleared from memory.`
+  )
   // Notify UI
   const allSymbols = new Set([...Object.keys(lastPrices), ...Object.keys(gridState)])
   allSymbols.forEach((symbol) => {

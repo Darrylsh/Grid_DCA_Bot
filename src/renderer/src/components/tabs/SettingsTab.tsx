@@ -106,9 +106,7 @@ export function SettingsTab(): React.ReactElement {
               Maximum number of DCA grid levels allowed per symbol (excluding base).
             </p>
           </div>
-          <div className="flex flex-col gap-2 opacity-0">
-            {/* Spacer */}
-          </div>
+          <div className="flex flex-col gap-2 opacity-0">{/* Spacer */}</div>
         </div>
 
         {/* Trailing Stop */}
@@ -150,6 +148,107 @@ export function SettingsTab(): React.ReactElement {
               Stop distance as fraction of grid step (0.5 = ½ grid = 1% at 2% grid).
             </p>
           </div>
+        </div>
+
+        {/* Dynamic Grid Settings */}
+        <div className="grid grid-cols-2 gap-8">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Enable Dynamic Grid
+            </label>
+            <div className="flex bg-slate-900/50 p-1 rounded-xl border border-slate-700">
+              {['true', 'false'].map((val) => (
+                <button
+                  key={val}
+                  onClick={() => updateSetting('dynamic_grid_enabled', val)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${(settings.dynamic_grid_enabled || 'false') === val ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  {val === 'true' ? 'On' : 'Off'}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 italic">
+              Delay buys during rapid price drops to capture better rebounds.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Momentum Window (ticks)
+            </label>
+            <input
+              type="number"
+              value={settings.momentum_window || '10'}
+              min="2"
+              max="100"
+              step="1"
+              onChange={(e) => updateSetting('momentum_window', e.target.value)}
+              className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <p className="text-xs text-slate-500 italic">
+              Number of recent price ticks to calculate momentum.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-8">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Momentum Threshold (%)
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                value={settings.momentum_threshold_pct || '-0.5'}
+                step="0.1"
+                max="-0.1"
+                onChange={(e) => updateSetting('momentum_threshold_pct', e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors pr-8"
+              />
+              <span className="absolute right-3 top-3 text-slate-500 font-bold">%</span>
+            </div>
+            <p className="text-xs text-slate-500 italic">
+              Negative price change over window to trigger delay (e.g. -0.5%).
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Rebound Threshold (%)
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                value={settings.rebound_threshold_pct || '0.25'}
+                step="0.05"
+                min="0.05"
+                max="2"
+                onChange={(e) => updateSetting('rebound_threshold_pct', e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors pr-8"
+              />
+              <span className="absolute right-3 top-3 text-slate-500 font-bold">%</span>
+            </div>
+            <p className="text-xs text-slate-500 italic">
+              Minimum rebound from low to trigger buy (e.g. 0.25%).
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-8">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Delay Timeout (minutes)
+            </label>
+            <input
+              type="number"
+              value={settings.dynamic_mode_timeout_min || '30'}
+              min="1"
+              max="1440"
+              step="1"
+              onChange={(e) => updateSetting('dynamic_mode_timeout_min', e.target.value)}
+              className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <p className="text-xs text-slate-500 italic">
+              Maximum time to wait for rebound before resuming normal grid.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 opacity-0">{/* Spacer */}</div>
         </div>
       </div>
 

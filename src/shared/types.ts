@@ -161,6 +161,11 @@ export type SettingKey =
   | 'trailing_stop_levels'
   | 'trailing_stop_pct'
   | 'window_state'
+  | 'dynamic_grid_enabled'
+  | 'momentum_window'
+  | 'momentum_threshold_pct'
+  | 'rebound_threshold_pct'
+  | 'dynamic_mode_timeout_min'
 
 /**
  * Setting value (always string for storage)
