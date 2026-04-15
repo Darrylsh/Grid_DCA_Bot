@@ -1,8 +1,16 @@
-# Electron Frontend Code Improvement Recommendations - UPDATED: April 8, 2026
+# Algobot Code Improvement Recommendations - UPDATED: April 15, 2026
 
 ## Summary
 
-**Recent refactoring completed:** Major codebase improvements implemented including component modularization, type safety enhancements, and React Context implementation. Analysis of the Electron frontend code reveals opportunities for enhancement in security, performance, code organization, and maintainability. The application follows good Electron security practices with recent improvements in type safety, component structure, and error handling.
+**Recent refactoring completed:** Major codebase improvements implemented including component modularization, type safety enhancements, React Context implementation, and backend stability fixes. Analysis reveals opportunities for enhancement in security, performance, code organization, and maintainability across both frontend and backend components.
+
+### Frontend
+
+The Electron frontend follows good security practices with recent improvements in type safety, component structure, and error handling. Major refactoring completed in April 2026 reduced `App.tsx` from 1556 to ~56 lines.
+
+### Backend
+
+Critical stability issues addressed in April 2026: division-by-zero safety, missing database index, and PnL calculation consistency. Backend runs headlessly on remote Ubuntu server with proper version management and deployment procedures.
 
 ## 1. Main Process (`src/main/index.ts`)
 
@@ -109,6 +117,87 @@
 - **✅ Tray integration**: System tray implemented with show/hide window and connection status
 - **Native features**: Use native dialogs instead of `window.confirm`
 
+## 7. Backend Code Review & Recommendations (April 2026)
+
+**Recent backend fixes completed:** Division-by-zero safety, missing database index, and PnL calculation consistency implemented.
+
+### Critical Issues Identified & Fixed:
+
+#### 1. Division by Zero Risks
+
+- **Issue**: Multiple locations in `bot.ts` performed division by `state.basePrice` or `state.baseQuantity` without safeguards
+- **Risk**: Application crash when `baseQuantity = 0` or corrupted state
+- **Solution**:
+  - Created `safeDivide()` helper function with logging and fallback values
+  - Created `getAvgEntryPrice()` for consistent average price calculation
+  - Updated all division operations: `sellBaseShare()`, `processTick()`, `broadcastMarketUpdate()`, `getUnrealizedPnl()`, `getFullGridState()`
+
+#### 2. Missing Database Index
+
+- **Issue**: No single-column index on `trades.mode` column, causing performance degradation
+- **Risk**: Slow queries when filtering trades by mode (LIVE/BACKTEST)
+- **Solution**: Added `idx_trades_mode` index in `schema.ts:40`
+
+#### 3. Inconsistent PnL Calculations
+
+- **Issue**: `getFullGridState()` used floating `basePrice` while `broadcastMarketUpdate()` used true cost basis (`baseEntryCost/baseQuantity`)
+- **Risk**: Different unrealized PnL values reported to frontend vs internal calculations
+- **Solution**: Standardized both functions to use `getAvgEntryPrice()` for consistent cost basis
+
+### Backend Stability Improvements:
+
+#### ✅ **Division Safety**
+
+- Added defensive programming with `safeDivide(numerator, denominator, fallback, context)`
+- Prevents crashes from zero denominators with appropriate fallback values
+- Logs division attempts for debugging corrupted state
+
+#### ✅ **Database Performance**
+
+- Index on `trades.mode` improves query performance for mode-based filtering
+- Maintains data consistency with existing unique composite index
+
+#### ✅ **Calculation Consistency**
+
+- Unified unrealized PnL calculation across the system
+- Ensures frontend displays accurate PnL matching internal state
+
+#### ✅ **Version Management**
+
+- Bumped backend version to `1.8.0` (from `1.7.0`)
+- Updated `expectedBackendVersion` in `package.json`
+- Deployed via SCP/PM2 to remote Ubuntu server (`192.168.10.42`)
+
+### Remaining Backend Considerations:
+
+#### Code Quality
+
+- **Type safety**: Ensure all `any` types are eliminated in backend code
+- **Error handling**: Add comprehensive error logging for exchange API failures
+- **Database migrations**: Consider migration system for schema changes
+
+#### Performance
+
+- **Connection pooling**: Optimize database connection management
+- **WebSocket management**: Improve reconnection logic for Binance streams
+- **Memory management**: Monitor for memory leaks in long-running processes
+
+#### Monitoring
+
+- **Health checks**: Add endpoint for backend health monitoring
+- **Metrics**: Implement performance metrics collection
+- **Log aggregation**: Centralize logs for debugging
+
+### File References
+
+| File                          | Lines                                         | Issue                         | Status                                                   |
+| ----------------------------- | --------------------------------------------- | ----------------------------- | -------------------------------------------------------- |
+| `src/main/bot.ts`             | Multiple                                      | Division by zero risks        | ✅ **Fixed** - Added safeDivide() and getAvgEntryPrice() |
+| `src/main/db/schema.ts`       | 40                                            | Missing index on trades.mode  | ✅ **Fixed** - Added idx_trades_mode index               |
+| `src/main/bot.ts`             | broadcastMarketUpdate() vs getFullGridState() | Inconsistent PnL calculations | ✅ **Fixed** - Unified using getAvgEntryPrice()          |
+| `src/main/headless-server.ts` | 41                                            | Version update                | ✅ **Fixed** - Bumped to 1.8.0                           |
+| `package.json`                | 4                                             | expectedBackendVersion        | ✅ **Fixed** - Updated to 1.8.0                          |
+
 ## Priority Recommendations
 
 ### High Priority
@@ -150,9 +239,9 @@
 
 ## Implementation Notes
 
-**UPDATE April 8, 2026:** Major refactoring completed with significant improvements:
+**UPDATE April 15, 2026:** Major refactoring completed with significant improvements across frontend and backend:
 
-### ✅ Completed Work:
+### ✅ Completed Frontend Work (April 2026):
 
 1. **Component Modularization**: Split monolithic `App.tsx` (1556 lines) into:
    - Tab components: `DashboardTab`, `BacktestTab`, `ReportsTab`, `SettingsTab`
@@ -164,6 +253,13 @@
 5. **ESLint Compliance**: Fixed all 57 ESLint errors, now at 0 errors with strict type checking
 6. **Error Boundaries**: Implemented React error boundary with fallback UI in `src/renderer/src/components/shared/ErrorBoundary.tsx`
 
+### ✅ Completed Backend Work (April 2026):
+
+1. **Division-by-Zero Safety**: Added `safeDivide()` helper and `getAvgEntryPrice()` function to prevent crashes
+2. **Database Performance**: Added missing index on `trades.mode` column (`idx_trades_mode`)
+3. **Calculation Consistency**: Unified unrealized PnL calculations between `broadcastMarketUpdate()` and `getFullGridState()`
+4. **Version Management**: Bumped backend to v1.8.0 with proper deployment to remote server
+
 ### 🔧 Technical Improvements:
 
 - Created path aliases (`@shared`, `@renderer`) in TypeScript config
@@ -171,15 +267,18 @@
 - Fixed React Fast Refresh warnings in Context provider
 - Improved error handling from `any` to `unknown` with proper type checking
 - Implemented granular error boundaries for each tab with custom fallback UI
+- Added defensive programming with safe division helpers and consistent calculations
 
 ### 📈 Results:
 
 - **App.tsx reduced from 1556 to ~56 lines** (96% reduction)
 - **0 ESLint errors** (from 57 originally)
 - **0 TypeScript compilation errors**
+- **3 critical backend issues fixed** (division safety, missing index, PnL consistency)
 - **Enhanced maintainability** with clear separation of concerns
+- **Backend version 1.8.0 deployed** to production Ubuntu server
 
-The codebase demonstrates solid Electron security practices with context isolation and preload scripts, now significantly improved with modern React patterns and strict TypeScript typing.
+The codebase demonstrates solid Electron security practices with context isolation and preload scripts, now significantly improved with modern React patterns, strict TypeScript typing, and backend stability fixes.
 
 ## Next Steps & Remaining Work
 
@@ -188,6 +287,15 @@ The codebase demonstrates solid Electron security practices with context isolati
 1. **Add test infrastructure** - Jest/React Testing Library for components and hooks
 2. **Improve accessibility** - ARIA labels, keyboard navigation
 3. ✅ **Add React error boundaries** - COMPLETED
+
+### Backend Priority:
+
+1. ✅ **Fix division-by-zero risks** - COMPLETED - Added safeDivide() and getAvgEntryPrice()
+2. ✅ **Add missing database index** - COMPLETED - idx_trades_mode on trades.mode
+3. ✅ **Unify PnL calculations** - COMPLETED - Consistent unrealized PnL across system
+4. **Add comprehensive error logging** - For exchange API failures and edge cases
+5. **Implement database migrations** - Schema change management system
+6. **Add health check endpoints** - For remote backend monitoring
 
 ### Medium Priority:
 
@@ -203,8 +311,18 @@ The codebase demonstrates solid Electron security practices with context isolati
 
 ### Completed (✅):
 
+#### Frontend
+
 - ✅ Component modularization & state management
 - ✅ Type safety & ESLint compliance
 - ✅ Preload listener cleanup
 - ✅ Performance improvements via Context API
 - ✅ System tray integration
+- ✅ React error boundaries
+
+#### Backend
+
+- ✅ Division-by-zero safety fixes
+- ✅ Missing database index added
+- ✅ PnL calculation consistency
+- ✅ Backend version 1.8.0 deployment
