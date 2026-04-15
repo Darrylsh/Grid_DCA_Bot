@@ -355,7 +355,7 @@ app.whenReady().then(async () => {
       try {
         return await new Promise((resolve, reject) => {
           socket
-            .timeout(600000)
+            .timeout(1800000)
             .emit(
               'runBacktest',
               symbol,
