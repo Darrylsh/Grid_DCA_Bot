@@ -353,7 +353,24 @@ app.whenReady().then(async () => {
       socket.on('bt:update', onUpdate)
 
       try {
-        return await socketCall('runBacktest', symbol, start, end, shareAmount, gridStep)
+        return await new Promise((resolve, reject) => {
+          socket
+            .timeout(600000)
+            .emit(
+              'runBacktest',
+              symbol,
+              start,
+              end,
+              shareAmount,
+              gridStep,
+              (err: unknown, res: SocketResponse | undefined) => {
+                if (err) return reject(new Error(`Socket timeout on runBacktest`))
+                if (!res) return resolve(undefined)
+                if (res.success) return resolve(res.data)
+                return reject(new Error(res.error || 'Unknown error'))
+              }
+            )
+        })
       } finally {
         socket.off('bt:progress', onProgress)
         socket.off('bt:update', onUpdate)
