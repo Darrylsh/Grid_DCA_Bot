@@ -36,6 +36,7 @@ process.stdout.write = (
 
 import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
 import { join } from 'path'
+import { readFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
@@ -386,7 +387,7 @@ app.whenReady().then(async () => {
       const pkgPath = join(__dirname, '../../package.json')
       // require('fs') could be used or we can just import fs.
       // It's safer to require inline if not imported at top
-      const pkg = JSON.parse(require('fs').readFileSync(pkgPath, 'utf8'))
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
       expectedBackend = pkg.expectedBackendVersion || 'unknown'
     } catch {
       // ignore

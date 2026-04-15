@@ -17,6 +17,13 @@ if (!['ui', 'srv'].includes(target)) {
   process.exit(1)
 }
 
+/**
+ * @param {string} version
+ * @param {string} type
+ * @returns {string}
+ * @type {(version: string, type: string) => string}
+ */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function bump(version, type) {
   const [major, minor, patch] = version.split('.').map(Number)
   if (type === 'major') return `${major + 1}.0.0`
