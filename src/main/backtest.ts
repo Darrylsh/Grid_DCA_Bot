@@ -208,7 +208,7 @@ export async function runBacktest(
   const baseCost = shareCost
   totalSpent += shareCost
 
-  let basePrice = baseEntryPrice // Reference price for grid buys (stays fixed at entry)
+  const basePrice = baseEntryPrice // Reference price for grid buys (stays fixed at entry)
   const trades: BacktestTrade[] = [
     {
       side: 'BUY',

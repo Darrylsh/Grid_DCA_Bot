@@ -388,7 +388,9 @@ app.whenReady().then(async () => {
       // It's safer to require inline if not imported at top
       const pkg = JSON.parse(require('fs').readFileSync(pkgPath, 'utf8'))
       expectedBackend = pkg.expectedBackendVersion || 'unknown'
-    } catch (e) {}
+    } catch {
+      // ignore
+    }
 
     return { frontend: app.getVersion(), backend: backendVersion, expectedBackend }
   })
