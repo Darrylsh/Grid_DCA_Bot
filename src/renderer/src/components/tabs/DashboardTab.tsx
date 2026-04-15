@@ -14,7 +14,7 @@ import {
   Pause,
   Play
 } from 'lucide-react'
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAppContext } from '@renderer/context/AppContext'
 import type { MarketUpdate, GridLevel } from '@shared/types'
 
@@ -36,8 +36,15 @@ export function DashboardTab(): React.ReactElement {
   const totalPnl = stats.totalPnl + stats.unrealizedPnl
   const principal = 727.4
   const roi = totalPnl / principal
+
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(Date.now()), 60000)
+    return () => clearInterval(interval)
+  }, [])
+
   const daysRunning = stats.firstTradeTime
-    ? Math.max(1, (Date.now() - stats.firstTradeTime) / (1000 * 60 * 60 * 24))
+    ? Math.max(1, (currentTime - stats.firstTradeTime) / (1000 * 60 * 60 * 24))
     : 1
   const safeRoi = Math.max(-0.999, roi)
   const apyFraction = Math.pow(1 + safeRoi, 365 / daysRunning) - 1
