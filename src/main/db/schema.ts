@@ -36,7 +36,8 @@ export const trades = pgTable(
       t.quantity,
       t.timestamp,
       t.mode
-    )
+    ),
+    idxMode: index('idx_trades_mode').on(t.mode)
   })
 )
 

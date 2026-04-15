@@ -186,6 +186,39 @@ const getDynamicModeTimeoutMs = (): number => {
   return safeMinutes * 60 * 1000
 }
 
+// Safe calculation helpers to prevent division by zero
+const getAvgEntryPrice = (state: GridState): number => {
+  // Prefer true cost basis if available
+  if (state.baseEntryCost > 0 && state.baseQuantity > 0) {
+    return state.baseEntryCost / state.baseQuantity
+  }
+  // Fallback to floating base price (should always be > 0 in valid state)
+  if (state.basePrice > 0) {
+    console.warn(
+      `[BOT] Using basePrice as avgEntry fallback for corrupted state (cost=${state.baseEntryCost}, qty=${state.baseQuantity})`
+    )
+    return state.basePrice
+  }
+  // Last resort fallback
+  console.error(
+    `[BOT] Invalid grid state: basePrice=${state.basePrice}, baseEntryCost=${state.baseEntryCost}, baseQuantity=${state.baseQuantity}`
+  )
+  return 0
+}
+
+const safeDivide = (
+  numerator: number,
+  denominator: number,
+  fallback: number,
+  context: string
+): number => {
+  if (denominator === 0 || !isFinite(denominator)) {
+    console.warn(`[BOT] Division by zero/infinity in ${context}, using fallback ${fallback}`)
+    return fallback
+  }
+  return numerator / denominator
+}
+
 const roundToStep = (value: number, step: number): number => {
   if (!step || step === 0) return value
   const precision = step.toString().split('.')[1]?.length || 0
@@ -531,8 +564,7 @@ const processTick = async (symbol: string, currentPrice: number): Promise<void> 
   // --- TRAILING STOP CHECK ---
   // Fires before UP/DOWN grid logic so a stop hit terminates processing immediately
   {
-    const avgEntry =
-      state.baseEntryCost > 0 ? state.baseEntryCost / state.baseQuantity : state.basePrice
+    const avgEntry = getAvgEntryPrice(state)
     const levelsUp = Math.log(currentPrice / avgEntry) / Math.log(1 + stepMult)
     const triggerLevels = getTrailingStopLevels()
     const stopPct = getTrailingStopPct()
@@ -686,7 +718,9 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
 
   let pctFromBase: number | null = null
   if (state) {
-    pctFromBase = ((currentPrice - state.basePrice) / state.basePrice) * 100
+    pctFromBase =
+      safeDivide(currentPrice - state.basePrice, state.basePrice, 0, `pctFromBase for ${symbol}`) *
+      100
   }
 
   // Percentage to next grid sell level
@@ -705,13 +739,16 @@ const broadcastMarketUpdate = (symbol: string, currentPrice: number): void => {
   let baseUnrealizedPnl = 0
   let baseUnrealizedRoi = 0
   if (state) {
-    // FALLBACK: If cost/quantity was missing from DB migration, estimate it from share amount
-    const entryCost = state.baseEntryCost > 0 ? state.baseEntryCost : getShareAmount()
-    const entryQty = state.baseQuantity > 0 ? state.baseQuantity : entryCost / state.basePrice
-
-    const avgEntryPrice = entryCost / entryQty
-    baseUnrealizedPnl = (currentPrice - avgEntryPrice) * entryQty
-    baseUnrealizedRoi = (currentPrice - avgEntryPrice) / avgEntryPrice
+    const avgEntryPrice = getAvgEntryPrice(state)
+    // Use actual base quantity; if 0 (corrupted), PnL is 0
+    const baseQty = state.baseQuantity > 0 ? state.baseQuantity : 0
+    baseUnrealizedPnl = (currentPrice - avgEntryPrice) * baseQty
+    baseUnrealizedRoi = safeDivide(
+      currentPrice - avgEntryPrice,
+      avgEntryPrice,
+      0,
+      `broadcastMarketUpdate ROI for ${symbol}`
+    )
   }
 
   // Unrealized PnL from grid levels
@@ -901,10 +938,14 @@ const sellBaseShare = async (
     }
   }
 
-  const pnl = (fillPrice - state.baseEntryCost / state.baseQuantity) * state.baseQuantity
-  const roi =
-    (fillPrice - state.baseEntryCost / state.baseQuantity) /
-    (state.baseEntryCost / state.baseQuantity)
+  const avgEntryPrice = getAvgEntryPrice(state)
+  const pnl = (fillPrice - avgEntryPrice) * state.baseQuantity
+  const roi = safeDivide(
+    fillPrice - avgEntryPrice,
+    avgEntryPrice,
+    0,
+    `sellBaseShare ROI for ${symbol}`
+  )
 
   await logTrade(
     {
@@ -1468,8 +1509,7 @@ export const getUnrealizedPnl = (): number => {
     // Use true cost basis (original entry price), not the floating grid reference.
     // The floating basePrice ratchets up as price rises, which would make profitable
     // positions appear as losses once price dips below the new grid reference.
-    const avgEntry =
-      state.baseEntryCost > 0 ? state.baseEntryCost / state.baseQuantity : state.basePrice
+    const avgEntry = getAvgEntryPrice(state)
     total += (price - avgEntry) * state.baseQuantity
     const levels = gridLevels[symbol] || []
     for (const level of levels) {
@@ -1508,11 +1548,18 @@ export const getFullGridState = (): Record<string, any> => {
       baseQuantity: state?.baseQuantity,
       baseEntryCost: state?.baseEntryCost,
       currentPrice: price,
-      pctFromBase: state ? ((price - state.basePrice) / state.basePrice) * 100 : null,
+      pctFromBase: state
+        ? safeDivide(
+            price - state.basePrice,
+            state.basePrice,
+            0,
+            `getFullGridState pctFromBase for ${symbol}`
+          ) * 100
+        : null,
       pctToGrid,
       gridLevels: levels,
       totalUnrealizedPnl: state
-        ? (price - state.basePrice) * state.baseQuantity +
+        ? (price - getAvgEntryPrice(state)) * (state.baseQuantity > 0 ? state.baseQuantity : 0) +
           levels.reduce((s, l) => s + (price - l.buyPrice) * l.quantity, 0)
         : 0
     }
@@ -1602,7 +1649,10 @@ export const startBot = async (): Promise<void> => {
           const levels = (gridLevels[sym] || []).length
           if (!price) return `${sym.replace('USDT', '')}: no data`
           const pct = state
-            ? (((price - state.basePrice) / state.basePrice) * 100).toFixed(2) + '%'
+            ? (
+                safeDivide(price - state.basePrice, state.basePrice, 0, `market pulse for ${sym}`) *
+                100
+              ).toFixed(2) + '%'
             : 'no base'
           return `${sym.replace('USDT', '')}: $${price.toFixed(4)} (${pct}) [${levels} levels]`
         })
