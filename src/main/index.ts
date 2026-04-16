@@ -439,6 +439,10 @@ app.whenReady().then(async () => {
   autoUpdater.autoInstallOnAppQuit = true // Install on quit if update downloaded
   autoUpdater.fullChangelog = true // Include full changelog in update info
 
+  console.log(
+    `[AutoUpdater] Configured for GitHub: Darrylsh/Grid_DCA_Bot, app version: ${app.getVersion()}`
+  )
+
   // Forward auto-updater events to renderer
   const sendUpdateStatus = (channel: string, data?: unknown): void => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -447,56 +451,70 @@ app.whenReady().then(async () => {
   }
 
   autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Checking for updates...')
     sendUpdateStatus('update:checking')
   })
 
   autoUpdater.on('update-available', (info) => {
+    console.log(`[AutoUpdater] Update available: ${info.version}`)
     sendUpdateStatus('update:available', info)
   })
 
   autoUpdater.on('update-not-available', (info) => {
+    console.log(`[AutoUpdater] No updates available (current: ${app.getVersion()})`)
     sendUpdateStatus('update:not-available', info)
   })
 
   autoUpdater.on('download-progress', (progressObj) => {
+    console.log(`[AutoUpdater] Download progress: ${Math.floor(progressObj.percent)}%`)
     sendUpdateStatus('update:progress', progressObj)
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[AutoUpdater] Update downloaded: ${info.version}, ready to install`)
     sendUpdateStatus('update:downloaded', info)
   })
 
   autoUpdater.on('error', (error) => {
+    console.error(`[AutoUpdater] Error: ${error.message}`)
     sendUpdateStatus('update:error', error.message)
   })
 
   // IPC handlers for update actions
   handleIPC('update:check', async () => {
     try {
+      console.log('[AutoUpdater] Manual update check requested')
       // Check for updates, will trigger events above
       const result = await autoUpdater.checkForUpdates()
+      console.log(`[AutoUpdater] Update check result: ${result ? 'update available' : 'no update'}`)
       return { success: true, data: result?.updateInfo }
     } catch (error) {
+      console.error(`[AutoUpdater] Update check failed: ${(error as Error).message}`)
       return { success: false, error: (error as Error).message }
     }
   })
 
   handleIPC('update:download', async () => {
     try {
+      console.log('[AutoUpdater] Download requested')
       // Download the update, will trigger progress events
       await autoUpdater.downloadUpdate()
+      console.log('[AutoUpdater] Download completed successfully')
       return { success: true }
     } catch (error) {
+      console.error(`[AutoUpdater] Download failed: ${(error as Error).message}`)
       return { success: false, error: (error as Error).message }
     }
   })
 
   handleIPC('update:install', async () => {
     try {
+      console.log('[AutoUpdater] Installation requested, quitting and installing...')
       // Quit and install the update
       autoUpdater.quitAndInstall()
       return { success: true }
     } catch (error) {
+      console.error(`[AutoUpdater] Install failed: ${(error as Error).message}`)
       return { success: false, error: (error as Error).message }
     }
   })
