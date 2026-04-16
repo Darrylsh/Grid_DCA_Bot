@@ -509,9 +509,18 @@ app.whenReady().then(async () => {
     if (error.message.includes('404')) {
       userMessage =
         'GitHub repository not found or inaccessible. Check: 1) Repository is public, or 2) GitHub token has "repo" scope for private repos.'
-    } else if (error.message.includes('token') || error.message.includes('authentication')) {
+    } else if (error.message.includes('403') || error.message.includes('rate limit')) {
+      userMessage =
+        'GitHub API rate limit exceeded. Add GH_TOKEN environment variable with "repo" scope to increase limits.'
+    } else if (
+      error.message.includes('401') ||
+      error.message.includes('token') ||
+      error.message.includes('authentication')
+    ) {
       userMessage =
         'GitHub authentication failed. Ensure GH_TOKEN environment variable is set with "repo" scope.'
+    } else if (error.message.includes('network') || error.message.includes('ENOTFOUND')) {
+      userMessage = 'Network error. Check your internet connection and firewall settings.'
     }
 
     console.error(`[AutoUpdater] User message: ${userMessage}`)

@@ -72,6 +72,7 @@ export const useAppState = () => {
   const [versions, setVersions] = useState<VersionInfo | null>(null)
   const [updateChecking, setUpdateChecking] = useState(false)
   const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [updateNotAvailable, setUpdateNotAvailable] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<any>(null)
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0)
   const [updateDownloading, setUpdateDownloading] = useState(false)
@@ -205,18 +206,21 @@ export const useAppState = () => {
       handleUpdateChecking = () => {
         setUpdateChecking(true)
         setUpdateAvailable(false)
+        setUpdateNotAvailable(false)
         setUpdateDownloaded(false)
         setUpdateError(null)
       }
       handleUpdateAvailable = (info: any) => {
         setUpdateChecking(false)
         setUpdateAvailable(true)
+        setUpdateNotAvailable(false)
         setUpdateInfo(info)
         setUpdateError(null)
       }
       handleUpdateNotAvailable = (info: any) => {
         setUpdateChecking(false)
         setUpdateAvailable(false)
+        setUpdateNotAvailable(true)
         setUpdateInfo(info)
         setUpdateError(null)
       }
@@ -227,12 +231,14 @@ export const useAppState = () => {
       handleUpdateDownloaded = (info: any) => {
         setUpdateDownloading(false)
         setUpdateDownloaded(true)
+        setUpdateNotAvailable(false)
         setUpdateInfo(info)
         setUpdateError(null)
       }
       handleUpdateError = (error: string) => {
         setUpdateChecking(false)
         setUpdateDownloading(false)
+        setUpdateNotAvailable(false)
         setUpdateError(error)
       }
 
@@ -491,6 +497,8 @@ export const useAppState = () => {
     setUpdateChecking,
     updateAvailable,
     setUpdateAvailable,
+    updateNotAvailable,
+    setUpdateNotAvailable,
     updateInfo,
     setUpdateInfo,
     updateDownloadProgress,

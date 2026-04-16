@@ -12,6 +12,7 @@ export function SettingsTab(): React.ReactElement {
     handleWipeAllData,
     updateChecking,
     updateAvailable,
+    updateNotAvailable,
     updateInfo,
     updateDownloadProgress,
     updateDownloading,
@@ -272,9 +273,23 @@ export function SettingsTab(): React.ReactElement {
           <div className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-700/50 rounded-2xl">
             <div>
               <h4 className="text-white font-bold mb-1">Current Version</h4>
-              <p className="text-slate-400 text-xs">
-                {electronVersion ? `Algobot Desktop v${electronVersion}` : 'Checking...'}
-              </p>
+              <div>
+                <p className="text-slate-400 text-xs mb-1">
+                  {electronVersion ? `Algobot Desktop v${electronVersion}` : 'Checking...'}
+                </p>
+                {electronVersion && (
+                  <button
+                    onClick={() =>
+                      (window as any).electron?.shell?.openExternal(
+                        'https://github.com/Darrylsh/Grid_DCA_Bot/releases'
+                      )
+                    }
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    View release notes →
+                  </button>
+                )}
+              </div>
             </div>
             <button
               onClick={checkForUpdates}
@@ -284,6 +299,15 @@ export function SettingsTab(): React.ReactElement {
               {updateChecking ? 'Checking...' : 'Check for Updates'}
             </button>
           </div>
+
+          {updateNotAvailable && (
+            <div className="p-4 bg-slate-800/40 border border-emerald-700/50 rounded-2xl">
+              <h4 className="text-white font-bold mb-2">Up to Date</h4>
+              <p className="text-slate-300 text-sm">
+                You're running the latest version ({electronVersion || 'unknown'}).
+              </p>
+            </div>
+          )}
 
           {updateAvailable && (
             <div className="p-4 bg-slate-800/40 border border-indigo-700/50 rounded-2xl">
