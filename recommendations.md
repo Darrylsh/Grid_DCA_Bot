@@ -1,8 +1,8 @@
-# Algobot Code Improvement Recommendations - UPDATED: April 15, 2026
+# Algobot Code Improvement Recommendations - UPDATED: April 16, 2026
 
 ## Summary
 
-**Recent refactoring completed:** Major codebase improvements implemented including component modularization, type safety enhancements, React Context implementation, and backend stability fixes. Analysis reveals opportunities for enhancement in security, performance, code organization, and maintainability across both frontend and backend components.
+**Recent refactoring completed:** Major codebase improvements implemented including component modularization, type safety enhancements, React Context implementation, backend stability fixes, and auto-updater implementation. Analysis reveals opportunities for enhancement in security, performance, code organization, and maintainability across both frontend and backend components.
 
 ### Frontend
 
@@ -18,7 +18,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 - ⚠️ **Enable sandbox**: Line 108 sets `sandbox: false` – sandbox disabled due to backend connection issues
 - ✅ **Single instance lock**: Added `app.requestSingleInstanceLock()` with second-instance focus handling
-- **Auto-updater**: Implement `electron-updater` for automatic updates
+- ✅ **Auto-updater**: Implement `electron-updater` for automatic updates **COMPLETED** - GitHub releases with token management
 - **Global error handling**: Add unhandled rejection and exception handlers
 - **IPC validation**: Validate all IPC arguments with schemas (zod/joi) before processing
 
@@ -119,7 +119,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ## 7. Backend Code Review & Recommendations (April 2026)
 
-**Recent backend fixes completed:** Division-by-zero safety, missing database index, and PnL calculation consistency implemented.
+**Recent backend fixes completed:** Division-by-zero safety, missing database index, PnL calculation consistency, and balance check bug fix implemented.
 
 ### Critical Issues Identified & Fixed:
 
@@ -144,6 +144,12 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 - **Risk**: Different unrealized PnL values reported to frontend vs internal calculations
 - **Solution**: Standardized both functions to use `getAvgEntryPrice()` for consistent cost basis
 
+#### 4. Balance Check Bug in LIVE Mode
+
+- **Issue**: `grid-engine.ts` used hardcoded `{ USDT: 0, BNB: 0 }` instead of fetching actual exchange balances in LIVE mode
+- **Risk**: Grid buys prevented despite sufficient USDT balance, causing missed trading opportunities
+- **Solution**: Added `fetchBalances()` call before balance checks in LIVE mode, ensuring accurate balance validation
+
 ### Backend Stability Improvements:
 
 #### ✅ **Division Safety**
@@ -162,10 +168,15 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 - Unified unrealized PnL calculation across the system
 - Ensures frontend displays accurate PnL matching internal state
 
+#### ✅ **Balance Check Fix**
+
+- Fixed LIVE mode balance validation to fetch actual exchange balances
+- Prevents missed grid buys due to incorrect balance checking
+
 #### ✅ **Version Management**
 
-- Bumped backend version to `1.8.0` (from `1.7.0`)
-- Updated `expectedBackendVersion` in `package.json`
+- Bumped backend version to `1.9.1` (from `1.8.0`)
+- Updated `expectedBackendVersion` in `package.json` to 1.9.1
 - Deployed via SCP/PM2 to remote Ubuntu server (`192.168.10.42`)
 
 ### Remaining Backend Considerations:
@@ -202,8 +213,8 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 | `src/main/bot.ts`             | 1703                                          | Monolithic file size          | ⏳ Pending - Consider modular refactoring                |
 | `src/main/db/schema.ts`       | 40                                            | Missing index on trades.mode  | ✅ **Fixed** - Added idx_trades_mode index               |
 | `src/main/bot.ts`             | broadcastMarketUpdate() vs getFullGridState() | Inconsistent PnL calculations | ✅ **Fixed** - Unified using getAvgEntryPrice()          |
-| `src/main/headless-server.ts` | 41                                            | Version update                | ✅ **Fixed** - Bumped to 1.8.0                           |
-| `package.json`                | 4                                             | expectedBackendVersion        | ✅ **Fixed** - Updated to 1.8.0                          |
+| `src/main/headless-server.ts` | 41                                            | Version update                | ✅ **Fixed** - Bumped to 1.9.1                           |
+| `package.json`                | 4                                             | expectedBackendVersion        | ✅ **Fixed** - Updated to 1.9.1                          |
 
 ## Priority Recommendations
 
@@ -225,7 +236,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 1. Define missing `.custom-scrollbar` CSS class
 2. Integrate native Electron dialogs
-3. Implement auto-updater
+3. ✅ Implement auto-updater - COMPLETED - GitHub releases with user-initiated updates
 4. ✅ Add system tray support - COMPLETED
 
 ## File References
@@ -246,7 +257,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ## Implementation Notes
 
-**UPDATE April 15, 2026:** Major refactoring completed with significant improvements across frontend and backend:
+**UPDATE April 16, 2026:** Major refactoring completed with significant improvements across frontend and backend:
 
 ### ✅ Completed Frontend Work (April 2026):
 
@@ -267,6 +278,15 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 3. **Calculation Consistency**: Unified unrealized PnL calculations between `broadcastMarketUpdate()` and `getFullGridState()`
 4. **Version Management**: Bumped backend to v1.8.0 with proper deployment to remote server
 
+### ✅ Auto-updater Implementation (April 2026):
+
+1. **GitHub Releases**: Configured `electron-updater` with GitHub provider (owner: Darrylsh, repo: Grid_DCA_Bot)
+2. **User-Initiated Updates**: Manual check/download/install flow (not automatic background updates)
+3. **Token Management**: Secure GitHub token setup with system environment variables (GH_TOKEN)
+4. **Publishing Scripts**: Created PowerShell scripts for reliable publishing with token validation
+5. **UI Integration**: Update checking in Settings tab with progress indicators and error handling
+6. **Version Management**: Integrated with existing version bump scripts for frontend/backend
+
 ### 🔧 Technical Improvements:
 
 - Created path aliases (`@shared`, `@renderer`) in TypeScript config
@@ -282,6 +302,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 - **0 ESLint errors** (from 57 originally)
 - **0 TypeScript compilation errors**
 - **3 critical backend issues fixed** (division safety, missing index, PnL consistency)
+- **Auto-updater implemented** with GitHub releases and secure token management
 - **Enhanced maintainability** with clear separation of concerns
 - **Backend version 1.8.0 deployed** to production Ubuntu server
 
@@ -314,7 +335,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 ### Low Priority:
 
 1. ⚠️ **Enable sandbox** - Attempted but reverted due to backend connection issues
-2. **Implement auto-updater** - `electron-updater` integration
+2. ✅ **Implement auto-updater** - COMPLETED - `electron-updater` with GitHub releases and token management
 3. ✅ **Add system tray support** - COMPLETED - Background operation with connection status
 
 ### Completed (✅):
@@ -326,6 +347,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 - ✅ Preload listener cleanup
 - ✅ Performance improvements via Context API
 - ✅ System tray integration
+- ✅ Auto-updater implementation with GitHub releases
 - ✅ React error boundaries
 
 #### Backend
@@ -333,4 +355,5 @@ The codebase demonstrates solid Electron security practices with context isolati
 - ✅ Division-by-zero safety fixes
 - ✅ Missing database index added
 - ✅ PnL calculation consistency
-- ✅ Backend version 1.8.0 deployment
+- ✅ Balance check bug fix (grid-engine.ts) - LIVE mode now fetches actual balances
+- ✅ Backend version 1.9.1 deployment
