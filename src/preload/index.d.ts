@@ -91,14 +91,14 @@ export interface IElectronAPI {
 
   onUpdateChecking: (callback: () => void) => void
   offUpdateChecking: (callback: () => void) => void
-  onUpdateAvailable: (callback: (info: any) => void) => void
-  offUpdateAvailable: (callback: (info: any) => void) => void
-  onUpdateNotAvailable: (callback: (info: any) => void) => void
-  offUpdateNotAvailable: (callback: (info: any) => void) => void
-  onUpdateProgress: (callback: (progress: any) => void) => void
-  offUpdateProgress: (callback: (progress: any) => void) => void
-  onUpdateDownloaded: (callback: (info: any) => void) => void
-  offUpdateDownloaded: (callback: (info: any) => void) => void
+  onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void
+  offUpdateAvailable: (callback: (info: UpdateInfo) => void) => void
+  onUpdateNotAvailable: (callback: (info: UpdateInfo) => void) => void
+  offUpdateNotAvailable: (callback: (info: UpdateInfo) => void) => void
+  onUpdateProgress: (callback: (progress: ProgressInfo) => void) => void
+  offUpdateProgress: (callback: (progress: ProgressInfo) => void) => void
+  onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => void
+  offUpdateDownloaded: (callback: (info: UpdateInfo) => void) => void
   onUpdateError: (callback: (error: string) => void) => void
   offUpdateError: (callback: (error: string) => void) => void
 }
