@@ -304,7 +304,7 @@ export function SettingsTab(): React.ReactElement {
             <div className="p-4 bg-slate-800/40 border border-emerald-700/50 rounded-2xl">
               <h4 className="text-white font-bold mb-2">Up to Date</h4>
               <p className="text-slate-300 text-sm">
-                You're running the latest version ({electronVersion || 'unknown'}).
+                You&apos;re running the latest version ({electronVersion || 'unknown'}).
               </p>
             </div>
           )}
