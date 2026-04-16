@@ -16,6 +16,12 @@ import type { UpdateInfo, ProgressInfo } from 'electron-updater'
 export { GridLevel, SymbolGridState }
 
 export interface IElectronAPI {
+  showConfirm: (options: {
+    title: string
+    message: string
+    detail?: string
+    type?: 'question' | 'info' | 'warning' | 'error'
+  }) => Promise<boolean>
   startBot: () => Promise<void>
 
   // Grid

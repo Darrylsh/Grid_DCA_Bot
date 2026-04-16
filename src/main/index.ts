@@ -34,7 +34,7 @@ process.stdout.write = (
   return originalStdoutWrite(chunk, encoding as BufferEncoding, callback)
 }
 
-import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
 import { readFileSync } from 'fs'
@@ -298,6 +298,23 @@ app.whenReady().then(async () => {
     ipcMain.removeHandler(channel)
     ipcMain.handle(channel, handler)
   }
+
+  handleIPC(
+    'app:showConfirm',
+    async (_, options: { title: string; message: string; detail?: string; type?: string }) => {
+      if (!mainWindow) return false
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: (options.type as any) || 'question',
+        buttons: ['Cancel', 'Confirm'], // 0 = Cancel, 1 = Confirm
+        defaultId: 1,
+        cancelId: 0,
+        title: options.title || 'Confirm Action',
+        message: options.message,
+        detail: options.detail || ''
+      })
+      return response === 1
+    }
+  )
 
   // Socket proxies for all original bot features
   handleIPC('bot:start', async () => true)

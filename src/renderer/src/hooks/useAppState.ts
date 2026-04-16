@@ -373,7 +373,14 @@ export const useAppState = () => {
   }
 
   const handleResetStats = async (): Promise<void> => {
-    if (window.confirm(`Reset all ${tradingMode} trade history? This cannot be undone.`)) {
+    const confirmed = await window.api.showConfirm({
+      title: 'Reset Trade History',
+      message: `Reset all ${tradingMode} trade history?`,
+      detail: 'This action cannot be undone and will reset all profit metrics.',
+      type: 'warning'
+    })
+
+    if (confirmed) {
       await window.api.clearTradeHistory(tradingMode)
       window.api.getStats().then(setStats)
       window.api.getRecentTrades({ mode: tradingMode, limit: 50 }).then(setLogs)
@@ -381,11 +388,15 @@ export const useAppState = () => {
   }
 
   const handleWipeAllData = async (): Promise<void> => {
-    if (
-      window.confirm(
-        `WIPE ALL DATA for ${tradingMode}? This will delete all base shares, grid levels, and trade history. This cannot be undone.`
-      )
-    ) {
+    const confirmed = await window.api.showConfirm({
+      title: 'Full Data Wipe',
+      message: `WIPE ALL DATA for ${tradingMode}?`,
+      detail:
+        'This will permanently delete all base shares, grid levels, and trade history. This action cannot be undone.',
+      type: 'error'
+    })
+
+    if (confirmed) {
       await window.api.wipeAllData(tradingMode)
       setToast({ message: `Full data wipe completed for ${tradingMode}`, type: 'success' })
       // Refresh all state
@@ -396,11 +407,15 @@ export const useAppState = () => {
   }
 
   const handleDeleteBaseShare = async (symbol: string): Promise<void> => {
-    if (
-      window.confirm(
-        `Delete local record for ${stripUSDT(symbol)}? This will NOT sell your coins on Binance, it only clears the bot's tracking state.`
-      )
-    ) {
+    const confirmed = await window.api.showConfirm({
+      title: 'Delete Local Record',
+      message: `Delete local record for ${stripUSDT(symbol)}?`,
+      detail:
+        "This will NOT sell your coins on Binance. It only clears the bot's tracking state for this symbol.",
+      type: 'question'
+    })
+
+    if (confirmed) {
       await window.api.deleteBaseShare(symbol)
       setToast({ message: `Record deleted for ${stripUSDT(symbol)}`, type: 'success' })
       // Refresh state

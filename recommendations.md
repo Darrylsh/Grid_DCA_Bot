@@ -115,7 +115,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 - **Menu customization**: Add application menu with keyboard shortcuts
 - **✅ Tray integration**: System tray implemented with show/hide window and connection status
-- **Native features**: Use native dialogs instead of `window.confirm`
+- ✅ **Native features**: Use native dialogs instead of `window.confirm` **COMPLETED**
 
 ## 7. Backend Code Review & Recommendations (April 2026)
 
@@ -235,7 +235,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 ### Low Priority
 
 1. ✅ Define missing `.custom-scrollbar` CSS class - COMPLETED
-2. Integrate native Electron dialogs
+- **✅ Native Dialogs**: Standard `window.confirm` replaced with OS-native message boxes **COMPLETED**
 3. ✅ Implement auto-updater - COMPLETED - GitHub releases with user-initiated updates
 4. ✅ Add system tray support - COMPLETED
 

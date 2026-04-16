@@ -11,6 +11,10 @@ import type {
 } from '../shared/types'
 
 const api = {
+  // ---- Application / UI ----
+  showConfirm: (options: { title: string; message: string; detail?: string; type?: string }) =>
+    ipcRenderer.invoke('app:showConfirm', options),
+
   // ---- Bot lifecycle ----
   startBot: () => ipcRenderer.invoke('bot:start'),
 

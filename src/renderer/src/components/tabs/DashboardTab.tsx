@@ -319,12 +319,15 @@ export function DashboardTab(): React.ReactElement {
                                 </button>
                                 <button
                                   aria-label={`Sell base share for ${stripUSDT(row.symbol)}`}
-                                  onClick={() => {
-                                    if (
-                                      window.confirm(
-                                        `Sell base share for ${stripUSDT(row.symbol)}?`
-                                      )
-                                    ) {
+                                  onClick={async () => {
+                                    const confirmed = await window.api.showConfirm({
+                                      title: 'Sell Base Share',
+                                      message: `Sell base share for ${stripUSDT(row.symbol)}?`,
+                                      detail: `This will place a market SELL order on Binance for your entire base position in ${stripUSDT(row.symbol)}.`,
+                                      type: 'warning'
+                                    })
+
+                                    if (confirmed) {
                                       window.api.sellBaseShare(row.symbol).then(() => {
                                         setToast({
                                           message: `Base share sold for ${stripUSDT(row.symbol)}`,
@@ -345,14 +348,18 @@ export function DashboardTab(): React.ReactElement {
                                       const lowest = [...levels].sort(
                                         (a, b) => a.sellPrice - b.sellPrice
                                       )[0]
-                                      if (
-                                        window.confirm(
-                                          `Sell lowest grid level for ${stripUSDT(row.symbol)}?\n` +
-                                            `Target: $${lowest.sellPrice.toFixed(4)}\n` +
-                                            `Quantity: ${lowest.quantity.toFixed(6)}\n` +
-                                            `Market sell at current price (~$${row.currentPrice?.toFixed(4)})`
-                                        )
-                                      ) {
+
+                                      const confirmed = await window.api.showConfirm({
+                                        title: 'Manual Grid Sell',
+                                        message: `Sell lowest grid level for ${stripUSDT(row.symbol)}?`,
+                                        detail:
+                                          `Target: $${lowest.sellPrice.toFixed(4)}\n` +
+                                          `Quantity: ${lowest.quantity.toFixed(6)}\n` +
+                                          `Market sell at current price (~$${row.currentPrice?.toFixed(4)})`,
+                                        type: 'question'
+                                      })
+
+                                      if (confirmed) {
                                         await window.api.sellLowestGridLevel(row.symbol)
                                         setToast({
                                           message: `Grid level sold for ${stripUSDT(row.symbol)}`,
@@ -380,11 +387,15 @@ export function DashboardTab(): React.ReactElement {
                               <button
                                 aria-label={`Clear all pending grid sells for ${stripUSDT(row.symbol)}`}
                                 onClick={async () => {
-                                  if (
-                                    window.confirm(
-                                      `Cancel all ${levels.length} pending grid sells for ${stripUSDT(row.symbol)}?`
-                                    )
-                                  ) {
+                                  const confirmed = await window.api.showConfirm({
+                                    title: 'Cancel Grid Levels',
+                                    message: `Cancel all ${levels.length} pending grid sells for ${stripUSDT(row.symbol)}?`,
+                                    detail:
+                                      'This will remove the tracking for these levels locally. It will NOT cancel active orders on Binance (the bot handles those automatically).',
+                                    type: 'question'
+                                  })
+
+                                  if (confirmed) {
                                     await window.api.clearGridLevels(row.symbol)
                                     setToast({
                                       message: `Grid levels cleared for ${stripUSDT(row.symbol)}`,
