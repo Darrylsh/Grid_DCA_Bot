@@ -78,7 +78,7 @@ export function Sidebar(): React.ReactElement {
                     title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${isMismatch ? `(Expected v${versions.expectedBackend})` : ''}`}
                   >
                     {isMismatch ? '⚠ ' : ''}
-                    UI v{versions.frontend} / Srv v{versions.backend}
+                    UI v{versions.frontend}✓ / Srv v{versions.backend}
                   </div>
                   <button
                     onClick={checkForUpdates}

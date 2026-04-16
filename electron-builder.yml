@@ -48,7 +48,8 @@ publish:
   provider: github
   owner: Darrylsh
   repo: Grid_DCA_Bot
-  # Token must be set in GITHUB_TOKEN environment variable
-  # or in .env file as GITHUB_TOKEN=your_token_here
+  # Token must be set in GH_TOKEN environment variable
+  # electron-builder looks for GH_TOKEN (not GITHUB_TOKEN)
+  # Set with: set GH_TOKEN=your_token_here (Windows) or export GH_TOKEN=your_token_here (Unix)
   releaseType: release
   channel: latest
