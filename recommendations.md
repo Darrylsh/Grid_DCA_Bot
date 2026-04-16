@@ -62,7 +62,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 - **Color contrast**: Some text colors may not meet WCAG standards
 - **Keyboard navigation**: Limited keyboard support for complex interactions
 - **Responsive design**: Fixed sidebar width (72px) – make collapsible for smaller windows
-- **Custom scrollbars**: `custom-scrollbar` class referenced but not defined in CSS
+- **Custom scrollbars**: `custom-scrollbar` class implemented in `main.css` **COMPLETED**
 
 ### Code Organization
 
@@ -87,7 +87,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ### `main.css` & `base.css`
 
-- **Missing styles**: `custom-scrollbar` class not defined
+- **✅ Custom scrollbars**: `.custom-scrollbar` class implemented in `main.css`
 - **Dark mode support**: Good color scheme for dark mode
 - **Browser compatibility**: Webkit-specific styles for date inputs
 
@@ -234,7 +234,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ### Low Priority
 
-1. Define missing `.custom-scrollbar` CSS class
+1. ✅ Define missing `.custom-scrollbar` CSS class - COMPLETED
 2. Integrate native Electron dialogs
 3. ✅ Implement auto-updater - COMPLETED - GitHub releases with user-initiated updates
 4. ✅ Add system tray support - COMPLETED
@@ -251,7 +251,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 | `src/renderer/src/App.tsx` | 25-37               | Inline SVG component              | ✅ **Fixed** - Extracted to `RobotIcon.tsx`                |
 | `src/renderer/src/App.tsx` | 39-106              | Large chart component             | ✅ **Fixed** - Extracted to `BacktestPriceChart.tsx`       |
 | `src/renderer/src/App.tsx` | 481                 | Hardcoded denominator             | ⏳ Pending (component refactored)                          |
-| `src/renderer/src/App.tsx` | 431,469,507,663,799 | Missing `.custom-scrollbar` style | ⏳ Pending                                                 |
+| `src/renderer/src/App.tsx` | 431,469,507,663,799 | Missing `.custom-scrollbar` style | ✅ **Fixed** in `main.css` |
 | `electron.vite.config.ts`  | -                   | No CSP configuration              | ⏳ Pending                                                 |
 | `package.json`             | -                   | No test scripts                   | ⏳ Pending                                                 |
 
@@ -329,7 +329,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 ### Medium Priority:
 
 1. ✅ **Implement single instance lock** - COMPLETED
-2. **Define missing CSS classes** - `.custom-scrollbar` styling
+2. ✅ **Define missing CSS classes** - `.custom-scrollbar` styling - COMPLETED
 3. **Add CSP configuration** - Content Security Policy for dev mode
 
 ### Low Priority:
