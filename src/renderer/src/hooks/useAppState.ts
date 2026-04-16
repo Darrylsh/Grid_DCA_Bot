@@ -82,6 +82,7 @@ export const useAppState = () => {
 
   // Refs
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const whitelistRef = useRef<string[]>([])
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -108,6 +109,24 @@ export const useAppState = () => {
     }, 1000)
     return () => clearInterval(t)
   }, [botStartTime])
+
+  // Keep whitelist ref up to date
+  useEffect(() => {
+    whitelistRef.current = whitelist
+  }, [whitelist])
+
+  // Clean up marketData when whitelist changes (remove symbols not in whitelist and without base share)
+  useEffect(() => {
+    setMarketData((prev) => {
+      const next = { ...prev }
+      Object.keys(next).forEach((symbol) => {
+        if (!whitelist.includes(symbol) && !next[symbol]?.hasBaseShare) {
+          delete next[symbol]
+        }
+      })
+      return next
+    })
+  }, [whitelist])
 
   // Fetch logs when trading mode changes
   useEffect(() => {
@@ -149,8 +168,24 @@ export const useAppState = () => {
     if (window.api) {
       window.api.getConnectionStatus?.().then((status: boolean) => setIsConnected(status))
       window.api.onConnectionStatus?.((status: boolean) => setIsConnected(status))
+      window.api.onWhitelistUpdated?.(() => {
+        window.api.getWhitelist().then((list) => {
+          setWhitelist(list)
+          whitelistRef.current = list
+        })
+      })
       window.api.onMarketUpdate((data) => {
-        setMarketData((prev) => ({ ...prev, [data.symbol]: data }))
+        // Keep symbol if it's in whitelist or has an active base share
+        if (whitelistRef.current.includes(data.symbol) || data.hasBaseShare) {
+          setMarketData((prev) => ({ ...prev, [data.symbol]: data }))
+        } else {
+          // Remove symbol from marketData if not in whitelist and no base share
+          setMarketData((prev) => {
+            const next = { ...prev }
+            delete next[data.symbol]
+            return next
+          })
+        }
         if (data.botStartTime) setBotStartTime(data.botStartTime)
         setTickFlashing(true)
         if (tickTimer) clearTimeout(tickTimer)
@@ -287,6 +322,7 @@ export const useAppState = () => {
     if (whitelist.includes(s)) return
     setWhitelist((prev) => {
       const list = [...prev, s]
+      whitelistRef.current = list
       debouncedSaveWhitelist(list)
       return list
     })
@@ -297,6 +333,7 @@ export const useAppState = () => {
   const handleRemoveSymbol = (sym: string): void => {
     setWhitelist((prev) => {
       const list = prev.filter((w) => w !== sym)
+      whitelistRef.current = list
       debouncedSaveWhitelist(list)
       return list
     })

@@ -47,6 +47,8 @@ export interface IElectronAPI {
   offMonitoringUpdate: (callback: (data: unknown) => void) => void
   onConnectionStatus: (callback: (status: boolean) => void) => void
   offConnectionStatus: (callback: (status: boolean) => void) => void
+  onWhitelistUpdated: (callback: (symbols?: string[]) => void) => void
+  offWhitelistUpdated: (callback: (symbols?: string[]) => void) => void
   getConnectionStatus: () => Promise<boolean>
 
   // Whitelist

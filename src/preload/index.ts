@@ -75,6 +75,14 @@ const api = {
     ipcRenderer.off('bot:connectionStatus', (_event, status) => callback(status))
   },
 
+  // Whitelist updates
+  onWhitelistUpdated: (callback: (symbols?: string[]) => void) => {
+    ipcRenderer.on('bot:whitelistUpdated', (_event, symbols) => callback(symbols))
+  },
+  offWhitelistUpdated: (callback: (symbols?: string[]) => void) => {
+    ipcRenderer.off('bot:whitelistUpdated', (_event, symbols) => callback(symbols))
+  },
+
   // ---- Whitelist ----
   getWhitelist: () => ipcRenderer.invoke('bot:getWhitelist') as Promise<string[]>,
   saveWhitelist: (symbols: string[]) => ipcRenderer.invoke('bot:saveWhitelist', symbols),
