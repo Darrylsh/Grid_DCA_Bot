@@ -68,7 +68,15 @@ export const executeGridBuy = async (symbol: string, currentPrice: number): Prom
   const gridStep = getGridStep()
   const stepMultiplier = gridStep / 100
   const currentMode = getCurrentMode()
-  const balances = { USDT: 0, BNB: 0 } // TODO: import balances from exchange-client
+  // For LIVE mode, fetch actual balances from exchange
+  if (currentMode === 'LIVE') {
+    try {
+      await fetchBalances()
+    } catch (error) {
+      console.error(`[GRID] ${symbol}: Failed to fetch balances:`, error)
+      // Continue with potentially stale balances
+    }
+  }
 
   if (currentMode === 'LIVE' && balances.USDT < shareAmount) {
     console.log(

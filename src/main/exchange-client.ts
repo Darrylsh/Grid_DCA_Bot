@@ -139,6 +139,7 @@ export const fetchBalances = async (): Promise<void> => {
     }
   } catch (e: any) {
     console.error('[BALANCE] Failed to fetch balances:', e.message)
+    console.error('[BALANCE] Error details:', e.response?.data || e.response || e)
   }
 }
 
