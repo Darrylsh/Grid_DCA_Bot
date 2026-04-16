@@ -15,7 +15,7 @@ For bug fixes that only affect one side (frontend or backend), use **patch** inc
 
 **Current Versions (as of April 2026):**
 
-- Frontend: 1.10.1 (package.json)
+- Frontend: 1.10.2 (package.json)
 - Backend: 1.9.1 (headless-server.ts)
 - Expected Backend: 1.9.1 (package.json)
 
