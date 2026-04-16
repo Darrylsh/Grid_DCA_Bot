@@ -1,13 +1,5 @@
 import React from 'react'
-import {
-  BarChart2,
-  Settings,
-  FileText,
-  Microscope,
-  DollarSign,
-  Clock,
-  RefreshCw
-} from 'lucide-react'
+import { BarChart2, Settings, FileText, Microscope, DollarSign, Clock } from 'lucide-react'
 import { RobotIcon } from '@renderer/components/icons/RobotIcon'
 import { useAppContext } from '@renderer/context/AppContext'
 
@@ -27,10 +19,18 @@ export function Sidebar(): React.ReactElement {
     marketData,
     handleAddSymbol,
     handleRemoveSymbol,
-    stripUSDT,
-    checkForUpdates,
-    updateChecking
+    stripUSDT
   } = useAppContext()
+
+  const isMismatch = versions
+    ? (() => {
+        const backendParts = versions.backend.split('.')
+        const expectedParts = versions.expectedBackend?.split('.') || []
+        return expectedParts.length >= 2 && expectedParts[0] !== 'unknown'
+          ? backendParts[0] !== expectedParts[0] || backendParts[1] !== expectedParts[1]
+          : versions.frontend !== versions.backend
+      })()
+    : false
 
   return (
     <aside
@@ -58,39 +58,6 @@ export function Sidebar(): React.ReactElement {
               <span>UPTIME: {uptime}</span>
             </div>
           )}
-          {versions &&
-            (() => {
-              const backendParts = versions.backend.split('.')
-              const expectedParts = versions.expectedBackend?.split('.') || []
-              const isMismatch =
-                expectedParts.length >= 2 && expectedParts[0] !== 'unknown'
-                  ? backendParts[0] !== expectedParts[0] || backendParts[1] !== expectedParts[1]
-                  : versions.frontend !== versions.backend
-
-              return (
-                <div className="flex items-center gap-1 mt-1.5">
-                  <div
-                    className={`flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
-                      isMismatch
-                        ? 'bg-amber-500/20 text-amber-400'
-                        : 'bg-slate-700/50 text-slate-500'
-                    }`}
-                    title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${isMismatch ? `(Expected v${versions.expectedBackend})` : ''}`}
-                  >
-                    {isMismatch ? '⚠ ' : ''}
-                    UI v{versions.frontend}✓ / Srv v{versions.backend}
-                  </div>
-                  <button
-                    onClick={checkForUpdates}
-                    disabled={updateChecking}
-                    className="text-slate-500 hover:text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Check for updates"
-                  >
-                    <RefreshCw size={10} className={updateChecking ? 'animate-spin' : ''} />
-                  </button>
-                </div>
-              )
-            })()}
         </div>
       </div>
 
@@ -195,6 +162,23 @@ export function Sidebar(): React.ReactElement {
           })}
         </ul>
       </div>
+
+      {/* Version Display */}
+      {versions && (
+        <div className="mt-4 pt-4 border-t border-slate-700/30">
+          <div
+            className={`text-[10px] font-mono px-3 py-1.5 rounded-full w-fit mx-auto ${
+              isMismatch ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700/50 text-slate-500'
+            }`}
+            title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${
+              isMismatch ? `(Expected v${versions.expectedBackend})` : ''
+            }`}
+          >
+            {isMismatch ? '⚠ ' : ''}
+            UI v{versions.frontend}✓ / Srv v{versions.backend}
+          </div>
+        </div>
+      )}
     </aside>
   )
 }
