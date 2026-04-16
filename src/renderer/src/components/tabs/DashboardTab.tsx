@@ -30,12 +30,13 @@ export function DashboardTab(): React.ReactElement {
     setToast,
     setMarketData,
     logs,
-    setLogs
+    setLogs,
+    settings
   } = useAppContext()
 
   const totalPnl = stats.totalPnl + stats.unrealizedPnl
-  const principal = 727.4
-  const roi = totalPnl / principal
+  const principal = parseFloat(settings.starting_balance || '727.40') || 727.4
+  const roi = principal > 0 ? totalPnl / principal : 0
 
   const [currentTime, setCurrentTime] = useState(() => Date.now())
   useEffect(() => {

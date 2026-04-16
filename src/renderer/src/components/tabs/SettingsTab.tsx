@@ -57,6 +57,25 @@ export function SettingsTab(): React.ReactElement {
         </div>
 
         <div className="grid grid-cols-2 gap-8">
+          {/* Starting Balance */}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+              Starting Portfolio Balance (USDT)
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                value={settings.starting_balance ?? '727.40'}
+                onChange={(e) => updateSetting('starting_balance', e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors pl-8"
+              />
+              <span className="absolute left-3 top-3 text-slate-500 font-bold">$</span>
+            </div>
+            <p className="text-xs text-slate-500 italic">
+              Initial capital used to calculate Portfolio ROI and APY.
+            </p>
+          </div>
+
           {/* Share Amount */}
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
@@ -75,7 +94,9 @@ export function SettingsTab(): React.ReactElement {
               Fixed USDT amount per grid share purchase.
             </p>
           </div>
+        </div>
 
+        <div className="grid grid-cols-2 gap-8">
           {/* Grid Step */}
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
@@ -97,10 +118,8 @@ export function SettingsTab(): React.ReactElement {
               Buy/sell trigger distance from reference price.
             </p>
           </div>
-        </div>
 
-        {/* Grid Buy Limits */}
-        <div className="grid grid-cols-2 gap-8">
+          {/* Max Grid Levels */}
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
               Max Grid Levels
@@ -118,7 +137,6 @@ export function SettingsTab(): React.ReactElement {
               Maximum number of DCA grid levels allowed per symbol (excluding base).
             </p>
           </div>
-          <div className="flex flex-col gap-2 opacity-0">{/* Spacer */}</div>
         </div>
 
         {/* Trailing Stop */}

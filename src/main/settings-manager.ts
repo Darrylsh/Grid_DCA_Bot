@@ -5,6 +5,7 @@
 // Default settings
 const defaultSettings: Record<string, string> = {
   trading_mode: 'LIVE',
+  starting_balance: '727.40',
   capital_type: 'FIXED',
   capital_value: '100',
   grid_step_percent: '3',
@@ -69,6 +70,11 @@ export const getAllSettings = (): Record<string, string> => ({ ...currentSetting
 export const getGridStep = (): number => {
   const step = parseFloat(currentSettings.grid_step_percent || '3')
   return isNaN(step) || step <= 0 ? 3 : step
+}
+
+export const getStartingBalance = (): number => {
+  const bal = parseFloat(currentSettings.starting_balance || '727.40')
+  return isNaN(bal) || bal <= 0 ? 727.4 : bal
 }
 
 export const getTrailingStopLevels = (): number => {

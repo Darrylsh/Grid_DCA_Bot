@@ -156,6 +156,7 @@ export interface BacktestProgress {
  */
 export type SettingKey =
   | 'trading_mode'
+  | 'starting_balance'
   | 'capital_value'
   | 'grid_step_percent'
   | 'trailing_stop_levels'

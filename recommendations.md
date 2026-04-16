@@ -68,7 +68,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 - **✅ Inline SVG**: RobotIcon defined inline – extract to asset file **COMPLETED** - Created `RobotIcon.tsx` component
 - **Duplicate logic**: Price formatting repeated – create utility functions
-- **Magic numbers**: Hardcoded values throughout – extract to constants
+- **✅ Magic numbers**: Starting portfolio balance extracted to configurable setting **COMPLETED**
 - **Sound management**: Audio playback without user preference option
 
 ## 4. Configuration Files
@@ -251,7 +251,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 | `src/renderer/src/App.tsx` | 25-37               | Inline SVG component              | ✅ **Fixed** - Extracted to `RobotIcon.tsx`                |
 | `src/renderer/src/App.tsx` | 39-106              | Large chart component             | ✅ **Fixed** - Extracted to `BacktestPriceChart.tsx`       |
 | `src/renderer/src/App.tsx` | 481                 | Hardcoded denominator             | ⏳ Pending (component refactored)                          |
-| `src/renderer/src/App.tsx` | 431,469,507,663,799 | Missing `.custom-scrollbar` style | ✅ **Fixed** in `main.css` |
+| `src/renderer/src/App.tsx` | 431,469,507,663,799 | Missing `.custom-scrollbar` style | ✅ **Fixed** in `main.css`                                 |
 | `electron.vite.config.ts`  | -                   | No CSP configuration              | ⏳ Pending                                                 |
 | `package.json`             | -                   | No test scripts                   | ⏳ Pending                                                 |
 
