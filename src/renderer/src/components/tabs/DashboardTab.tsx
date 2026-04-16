@@ -294,6 +294,7 @@ export function DashboardTab(): React.ReactElement {
                           <div className="flex items-center justify-end gap-1.5">
                             {!row.hasBaseShare ? (
                               <button
+                                aria-label={`Set base share for ${stripUSDT(row.symbol)}`}
                                 onClick={() => handleSetBase(row.symbol)}
                                 disabled={registeringSymbol === row.symbol}
                                 className="px-3 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 disabled:opacity-50 rounded-lg text-[10px] font-bold transition-colors border border-amber-500/30"
@@ -303,6 +304,7 @@ export function DashboardTab(): React.ReactElement {
                             ) : (
                               <div className="flex gap-2 items-center">
                                 <button
+                                  aria-label={row.isPaused ? 'Resume Buying' : 'Pause Buying'}
                                   onClick={async () => {
                                     await window.api.togglePause(row.symbol)
                                     setToast({
@@ -316,6 +318,7 @@ export function DashboardTab(): React.ReactElement {
                                   {row.isPaused ? <Play size={14} /> : <Pause size={14} />}
                                 </button>
                                 <button
+                                  aria-label={`Sell base share for ${stripUSDT(row.symbol)}`}
                                   onClick={() => {
                                     if (
                                       window.confirm(
@@ -337,6 +340,7 @@ export function DashboardTab(): React.ReactElement {
                                 </button>
                                 {levels.length > 0 && (
                                   <button
+                                    aria-label={`Sell lowest grid level for ${stripUSDT(row.symbol)}`}
                                     onClick={async () => {
                                       const lowest = [...levels].sort(
                                         (a, b) => a.sellPrice - b.sellPrice
@@ -363,6 +367,7 @@ export function DashboardTab(): React.ReactElement {
                                   </button>
                                 )}
                                 <button
+                                  aria-label="Delete local record only"
                                   onClick={() => handleDeleteBaseShare(row.symbol)}
                                   className="p-1.5 bg-slate-700 text-slate-400 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-all border border-slate-600"
                                   title="Delete local record only"
@@ -373,6 +378,7 @@ export function DashboardTab(): React.ReactElement {
                             )}
                             {levels.length > 0 && (
                               <button
+                                aria-label={`Clear all pending grid sells for ${stripUSDT(row.symbol)}`}
                                 onClick={async () => {
                                   if (
                                     window.confirm(
@@ -409,6 +415,7 @@ export function DashboardTab(): React.ReactElement {
             <Activity size={14} className="text-emerald-400" /> Recent Activity
           </h3>
           <button
+            aria-label="Clear activity logs"
             onClick={() => setLogs([])}
             className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors uppercase font-bold"
           >

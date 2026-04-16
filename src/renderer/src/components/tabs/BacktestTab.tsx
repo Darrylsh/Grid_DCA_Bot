@@ -131,6 +131,7 @@ export function BacktestTab(): React.ReactElement {
         {/* Run Button */}
         <div className="flex items-end md:col-span-5">
           <button
+            aria-label="Run backtest simulation"
             onClick={handleRunBacktest}
             disabled={btLoading || !btSymbol}
             className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-700 text-white font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-2 h-[38px]"

@@ -39,6 +39,7 @@ export function SettingsTab(): React.ReactElement {
             {['SIMULATION', 'LIVE'].map((mode) => (
               <button
                 key={mode}
+                aria-label={`Set trading mode to ${mode}`}
                 onClick={() => {
                   setTradingMode(mode)
                   window.api.saveSettings({ key: 'trading_mode', value: mode })
@@ -190,6 +191,7 @@ export function SettingsTab(): React.ReactElement {
               {['true', 'false'].map((val) => (
                 <button
                   key={val}
+                  aria-label={`Turn ${val === 'true' ? 'On' : 'Off'} dynamic grid`}
                   onClick={() => updateSetting('dynamic_grid_enabled', val)}
                   className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${(settings.dynamic_grid_enabled || 'false') === val ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
                 >
@@ -297,6 +299,7 @@ export function SettingsTab(): React.ReactElement {
                 </p>
                 {electronVersion && (
                   <button
+                    aria-label="View release notes"
                     onClick={() =>
                       (window as any).electron?.shell?.openExternal(
                         'https://github.com/Darrylsh/Grid_DCA_Bot/releases'
@@ -310,6 +313,7 @@ export function SettingsTab(): React.ReactElement {
               </div>
             </div>
             <button
+              aria-label="Check for Updates"
               onClick={checkForUpdates}
               disabled={updateChecking}
               className="bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-600/30 text-indigo-400 hover:text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -338,6 +342,7 @@ export function SettingsTab(): React.ReactElement {
               </p>
               <div className="flex justify-end">
                 <button
+                  aria-label="Download Update"
                   onClick={downloadUpdate}
                   disabled={updateDownloading}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
@@ -372,6 +377,7 @@ export function SettingsTab(): React.ReactElement {
               </p>
               <div className="flex justify-end gap-3">
                 <button
+                  aria-label="Install and Restart"
                   onClick={installUpdate}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all"
                 >
@@ -404,6 +410,7 @@ export function SettingsTab(): React.ReactElement {
               </p>
             </div>
             <button
+              aria-label={`Reset ${tradingMode} Trade History`}
               onClick={handleResetStats}
               className="bg-rose-600/20 hover:bg-rose-600 border border-rose-600/30 text-rose-400 hover:text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all"
             >
@@ -419,6 +426,7 @@ export function SettingsTab(): React.ReactElement {
               </p>
             </div>
             <button
+              aria-label="Wipe All Data"
               onClick={handleWipeAllData}
               className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-900/20"
             >

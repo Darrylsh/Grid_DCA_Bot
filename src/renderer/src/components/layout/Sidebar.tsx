@@ -71,6 +71,7 @@ export function Sidebar(): React.ReactElement {
         ].map(({ id, icon: Icon, label }) => (
           <button
             key={id}
+            aria-label={`Navigate to ${label}`}
             onClick={() => setActiveTab(id)}
             className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
               activeTab === id
@@ -122,6 +123,7 @@ export function Sidebar(): React.ReactElement {
             className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs w-full focus:outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-600 font-bold"
           />
           <button
+            aria-label="Add monitored pair"
             onClick={handleAddSymbol}
             className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 rounded-lg transition-colors font-bold"
           >
@@ -152,6 +154,7 @@ export function Sidebar(): React.ReactElement {
                   </span>
                 )}
                 <button
+                  aria-label={`Remove ${stripUSDT(sym)} from monitored pairs`}
                   onClick={() => handleRemoveSymbol(sym)}
                   className="text-slate-600 hover:text-rose-500 transition-colors text-lg leading-none"
                 >

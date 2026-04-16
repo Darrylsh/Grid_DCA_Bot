@@ -99,6 +99,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
             <div className="flex gap-4">
               <button
+                aria-label="Restart UI"
                 onClick={this.handleReset}
                 className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
               >
@@ -119,6 +120,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                 Restart UI
               </button>
               <button
+                aria-label="Reload Page"
                 onClick={() => window.location.reload()}
                 className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
               >
