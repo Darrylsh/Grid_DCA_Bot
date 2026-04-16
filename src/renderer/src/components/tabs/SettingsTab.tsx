@@ -9,7 +9,18 @@ export function SettingsTab(): React.ReactElement {
     settings,
     updateSetting,
     handleResetStats,
-    handleWipeAllData
+    handleWipeAllData,
+    updateChecking,
+    updateAvailable,
+    updateInfo,
+    updateDownloadProgress,
+    updateDownloading,
+    updateDownloaded,
+    updateError,
+    electronVersion,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate
   } = useAppContext()
 
   return (
@@ -249,6 +260,91 @@ export function SettingsTab(): React.ReactElement {
             </p>
           </div>
           <div className="flex flex-col gap-2 opacity-0">{/* Spacer */}</div>
+        </div>
+      </div>
+
+      {/* Application Updates */}
+      <div className="mt-12 pt-8 border-t border-slate-800/60">
+        <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-4">
+          Application Updates
+        </h3>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-700/50 rounded-2xl">
+            <div>
+              <h4 className="text-white font-bold mb-1">Current Version</h4>
+              <p className="text-slate-400 text-xs">
+                {electronVersion ? `Algobot Desktop v${electronVersion}` : 'Checking...'}
+              </p>
+            </div>
+            <button
+              onClick={checkForUpdates}
+              disabled={updateChecking}
+              className="bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-600/30 text-indigo-400 hover:text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {updateChecking ? 'Checking...' : 'Check for Updates'}
+            </button>
+          </div>
+
+          {updateAvailable && (
+            <div className="p-4 bg-slate-800/40 border border-indigo-700/50 rounded-2xl">
+              <h4 className="text-white font-bold mb-2">Update Available</h4>
+              <p className="text-slate-300 text-sm mb-4">
+                Version {updateInfo?.version} is available. Download size:{' '}
+                {updateInfo?.files?.[0]?.size
+                  ? Math.round((updateInfo.files[0].size / 1024 / 1024) * 10) / 10 + ' MB'
+                  : 'unknown'}
+              </p>
+              <div className="flex justify-end">
+                <button
+                  onClick={downloadUpdate}
+                  disabled={updateDownloading}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
+                >
+                  {updateDownloading ? 'Downloading...' : 'Download Update'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {updateDownloading && (
+            <div className="p-4 bg-slate-800/40 border border-slate-700/50 rounded-2xl">
+              <div className="flex justify-between text-xs text-slate-400 mb-2 font-mono">
+                <span>Downloading update...</span>
+                <span>{Math.round(updateDownloadProgress)}%</span>
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2">
+                <div
+                  className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${updateDownloadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {updateDownloaded && (
+            <div className="p-4 bg-slate-800/40 border border-emerald-700/50 rounded-2xl">
+              <h4 className="text-white font-bold mb-2">Update Ready to Install</h4>
+              <p className="text-slate-300 text-sm mb-4">
+                Version {updateInfo?.version} has been downloaded. The update will be installed
+                after you quit the application.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={installUpdate}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold transition-all"
+                >
+                  Install & Restart
+                </button>
+              </div>
+            </div>
+          )}
+
+          {updateError && (
+            <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-2xl">
+              <h4 className="text-rose-400 font-bold mb-2">Update Error</h4>
+              <p className="text-slate-300 text-sm">{updateError}</p>
+            </div>
+          )}
         </div>
       </div>
 

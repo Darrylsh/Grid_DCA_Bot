@@ -10,6 +10,7 @@ import {
   VersionInfo,
   MarketUpdate
 } from '../shared/types'
+import type { UpdateInfo, ProgressInfo } from 'electron-updater'
 
 // Re-export shared types for backward compatibility
 export { GridLevel, SymbolGridState }
@@ -76,6 +77,30 @@ export interface IElectronAPI {
   ) => void
   onBacktestProgress: (callback: (progress: number) => void) => void
   offBacktestProgress: (callback: (progress: number) => void) => void
+
+  // Auto-update
+  checkForUpdates: () => Promise<{ success: boolean; data?: UpdateInfo; error?: string }>
+  downloadUpdate: () => Promise<{ success: boolean; error?: string }>
+  installUpdate: () => Promise<{ success: boolean; error?: string }>
+  getCurrentVersion: () => Promise<{
+    version: string
+    name: string
+    platform: string
+    arch: string
+  }>
+
+  onUpdateChecking: (callback: () => void) => void
+  offUpdateChecking: (callback: () => void) => void
+  onUpdateAvailable: (callback: (info: any) => void) => void
+  offUpdateAvailable: (callback: (info: any) => void) => void
+  onUpdateNotAvailable: (callback: (info: any) => void) => void
+  offUpdateNotAvailable: (callback: (info: any) => void) => void
+  onUpdateProgress: (callback: (progress: any) => void) => void
+  offUpdateProgress: (callback: (progress: any) => void) => void
+  onUpdateDownloaded: (callback: (info: any) => void) => void
+  offUpdateDownloaded: (callback: (info: any) => void) => void
+  onUpdateError: (callback: (error: string) => void) => void
+  offUpdateError: (callback: (error: string) => void) => void
 }
 
 declare global {

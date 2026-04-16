@@ -70,6 +70,14 @@ export const useAppState = () => {
   const [toast, setToast] = useState<ToastType | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [versions, setVersions] = useState<VersionInfo | null>(null)
+  const [updateChecking, setUpdateChecking] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<any>(null)
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
+  const [updateDownloaded, setUpdateDownloaded] = useState(false)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [electronVersion, setElectronVersion] = useState<string>('')
 
   // Refs
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -131,6 +139,12 @@ export const useAppState = () => {
   useEffect(() => {
     let statsInterval: ReturnType<typeof setInterval>
     let tickTimer: ReturnType<typeof setTimeout>
+    let handleUpdateChecking: (() => void) | null = null
+    let handleUpdateAvailable: ((info: any) => void) | null = null
+    let handleUpdateNotAvailable: ((info: any) => void) | null = null
+    let handleUpdateProgress: ((progress: any) => void) | null = null
+    let handleUpdateDownloaded: ((info: any) => void) | null = null
+    let handleUpdateError: ((error: string) => void) | null = null
     if (window.api) {
       window.api.getConnectionStatus?.().then((status: boolean) => setIsConnected(status))
       window.api.onConnectionStatus?.((status: boolean) => setIsConnected(status))
@@ -186,10 +200,64 @@ export const useAppState = () => {
       statsInterval = setInterval(refreshStats, 10000)
       window.api.startBot()
       window.api.getVersion?.().then((v) => setVersions(v))
+
+      // Auto-update event listeners
+      handleUpdateChecking = () => {
+        setUpdateChecking(true)
+        setUpdateAvailable(false)
+        setUpdateDownloaded(false)
+        setUpdateError(null)
+      }
+      handleUpdateAvailable = (info: any) => {
+        setUpdateChecking(false)
+        setUpdateAvailable(true)
+        setUpdateInfo(info)
+        setUpdateError(null)
+      }
+      handleUpdateNotAvailable = (info: any) => {
+        setUpdateChecking(false)
+        setUpdateAvailable(false)
+        setUpdateInfo(info)
+        setUpdateError(null)
+      }
+      handleUpdateProgress = (progress: any) => {
+        setUpdateDownloading(true)
+        setUpdateDownloadProgress(progress.percent || 0)
+      }
+      handleUpdateDownloaded = (info: any) => {
+        setUpdateDownloading(false)
+        setUpdateDownloaded(true)
+        setUpdateInfo(info)
+        setUpdateError(null)
+      }
+      handleUpdateError = (error: string) => {
+        setUpdateChecking(false)
+        setUpdateDownloading(false)
+        setUpdateError(error)
+      }
+
+      window.api.onUpdateChecking?.(handleUpdateChecking)
+      window.api.onUpdateAvailable?.(handleUpdateAvailable)
+      window.api.onUpdateNotAvailable?.(handleUpdateNotAvailable)
+      window.api.onUpdateProgress?.(handleUpdateProgress)
+      window.api.onUpdateDownloaded?.(handleUpdateDownloaded)
+      window.api.onUpdateError?.(handleUpdateError)
+
+      // Get current electron app version
+      window.api.getCurrentVersion?.().then((v) => {
+        setElectronVersion(v?.version || '')
+      })
     }
     return () => {
       if (statsInterval) clearInterval(statsInterval)
       if (tickTimer) clearTimeout(tickTimer)
+      // Clean up update listeners
+      if (handleUpdateChecking) window.api.offUpdateChecking?.(handleUpdateChecking)
+      if (handleUpdateAvailable) window.api.offUpdateAvailable?.(handleUpdateAvailable)
+      if (handleUpdateNotAvailable) window.api.offUpdateNotAvailable?.(handleUpdateNotAvailable)
+      if (handleUpdateProgress) window.api.offUpdateProgress?.(handleUpdateProgress)
+      if (handleUpdateDownloaded) window.api.offUpdateDownloaded?.(handleUpdateDownloaded)
+      if (handleUpdateError) window.api.offUpdateError?.(handleUpdateError)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -235,6 +303,39 @@ export const useAppState = () => {
   const updateSetting = (key: string, value: string): void => {
     setSettings((prev) => ({ ...prev, [key]: value }))
     window.api.saveSettings({ key, value })
+  }
+
+  const checkForUpdates = async (): Promise<void> => {
+    try {
+      const result = await window.api.checkForUpdates?.()
+      if (!result?.success) {
+        setUpdateError(result?.error || 'Update check failed')
+      }
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Unknown error')
+    }
+  }
+
+  const downloadUpdate = async (): Promise<void> => {
+    try {
+      const result = await window.api.downloadUpdate?.()
+      if (!result?.success) {
+        setUpdateError(result?.error || 'Download failed')
+      }
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Unknown error')
+    }
+  }
+
+  const installUpdate = async (): Promise<void> => {
+    try {
+      const result = await window.api.installUpdate?.()
+      if (!result?.success) {
+        setUpdateError(result?.error || 'Installation failed')
+      }
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Unknown error')
+    }
   }
 
   const toggleTradingMode = (): void => {
@@ -364,8 +465,27 @@ export const useAppState = () => {
     setIsConnected,
     versions,
     setVersions,
+    updateChecking,
+    setUpdateChecking,
+    updateAvailable,
+    setUpdateAvailable,
+    updateInfo,
+    setUpdateInfo,
+    updateDownloadProgress,
+    setUpdateDownloadProgress,
+    updateDownloading,
+    setUpdateDownloading,
+    updateDownloaded,
+    setUpdateDownloaded,
+    updateError,
+    setUpdateError,
+    electronVersion,
+    setElectronVersion,
     // Handlers
     updateSetting,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate,
     handleAddSymbol,
     handleRemoveSymbol,
     handleResetStats,

@@ -13,6 +13,9 @@ asarUnpack:
   - resources/**
 win:
   executableName: algobot-desktop
+  # Signing is required for Windows auto-updates
+  # sign: path/to/signature.pfx
+  # certificatePassword: ''
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -26,6 +29,9 @@ mac:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
+  # Notarization is required for Mac auto-updates
+  # hardenedRuntime: true
+  # gatekeeperAssess: false
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
@@ -39,5 +45,10 @@ appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: Darrylsh
+  repo: Grid_DCA_Bot
+  # Token must be set in GITHUB_TOKEN environment variable
+  # or in .env file as GITHUB_TOKEN=your_token_here
+  releaseType: release
+  channel: latest

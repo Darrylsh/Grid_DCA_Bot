@@ -123,6 +123,49 @@ const api = {
   },
   offBacktestProgress: (callback: (progress: number) => void) => {
     ipcRenderer.off('bt:progress', (_event, progress) => callback(progress))
+  },
+
+  // ---- Auto-update ----
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  getCurrentVersion: () => ipcRenderer.invoke('update:get-current-version'),
+
+  onUpdateChecking: (callback: () => void) => {
+    ipcRenderer.on('update:checking', () => callback())
+  },
+  offUpdateChecking: (callback: () => void) => {
+    ipcRenderer.off('update:checking', () => callback())
+  },
+  onUpdateAvailable: (callback: (info: any) => void) => {
+    ipcRenderer.on('update:available', (_event, info) => callback(info))
+  },
+  offUpdateAvailable: (callback: (info: any) => void) => {
+    ipcRenderer.off('update:available', (_event, info) => callback(info))
+  },
+  onUpdateNotAvailable: (callback: (info: any) => void) => {
+    ipcRenderer.on('update:not-available', (_event, info) => callback(info))
+  },
+  offUpdateNotAvailable: (callback: (info: any) => void) => {
+    ipcRenderer.off('update:not-available', (_event, info) => callback(info))
+  },
+  onUpdateProgress: (callback: (progress: any) => void) => {
+    ipcRenderer.on('update:progress', (_event, progress) => callback(progress))
+  },
+  offUpdateProgress: (callback: (progress: any) => void) => {
+    ipcRenderer.off('update:progress', (_event, progress) => callback(progress))
+  },
+  onUpdateDownloaded: (callback: (info: any) => void) => {
+    ipcRenderer.on('update:downloaded', (_event, info) => callback(info))
+  },
+  offUpdateDownloaded: (callback: (info: any) => void) => {
+    ipcRenderer.off('update:downloaded', (_event, info) => callback(info))
+  },
+  onUpdateError: (callback: (error: string) => void) => {
+    ipcRenderer.on('update:error', (_event, error) => callback(error))
+  },
+  offUpdateError: (callback: (error: string) => void) => {
+    ipcRenderer.off('update:error', (_event, error) => callback(error))
   }
 }
 

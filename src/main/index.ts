@@ -35,6 +35,7 @@ process.stdout.write = (
 }
 
 import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
 import { readFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -63,6 +64,7 @@ app.on('second-instance', () => {
 const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://192.168.10.42:3030'
 const socket = ioClient(SERVER_URL)
 let tray: Tray | null = null
+let mainWindow: BrowserWindow | null = null
 
 interface SocketResponse {
   success: boolean
@@ -130,18 +132,18 @@ function createTray(mainWindow: BrowserWindow): void {
 function updateTrayMenu(): void {
   if (!tray) return
 
-  const mainWindow = BrowserWindow.getAllWindows()[0]
   if (!mainWindow) return
+  const win = mainWindow
 
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Show/Hide',
       click: () => {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide()
+        if (win.isVisible()) {
+          win.hide()
         } else {
-          mainWindow.show()
-          mainWindow.focus()
+          win.show()
+          win.focus()
         }
       }
     },
@@ -178,7 +180,7 @@ function createWindow(settings: Record<string, string>): void {
     console.error('Failed to parse window state:', e)
   }
 
-  const mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: windowState.width,
     height: windowState.height,
     x: windowState.x ?? undefined,
@@ -192,12 +194,13 @@ function createWindow(settings: Record<string, string>): void {
     }
   })
 
-  createTray(mainWindow)
+  createTray(window)
+  mainWindow = window // Set global reference
 
-  if (windowState.isMaximized) mainWindow.maximize()
+  if (windowState.isMaximized) window.maximize()
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  window.on('ready-to-show', () => {
+    window.show()
     fwd('bot:connectionStatus')(socket.connected)
   })
 
@@ -206,8 +209,8 @@ function createWindow(settings: Record<string, string>): void {
   const saveWindowState = (): void => {
     if (saveTimeout) clearTimeout(saveTimeout)
     saveTimeout = setTimeout(async () => {
-      const bounds = mainWindow.getBounds()
-      const isMaximized = mainWindow.isMaximized()
+      const bounds = window.getBounds()
+      const isMaximized = window.isMaximized()
       await socketCall(
         'updateSetting',
         'window_state',
@@ -215,14 +218,14 @@ function createWindow(settings: Record<string, string>): void {
       ).catch(console.error)
     }, 1000)
   }
-  mainWindow.on('resize', saveWindowState)
-  mainWindow.on('move', saveWindowState)
+  window.on('resize', saveWindowState)
+  window.on('move', saveWindowState)
 
   // Forward bot events to renderer
   const fwd =
     (channel: string) =>
     (data: unknown): void => {
-      if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data)
+      if (!window.isDestroyed()) window.webContents.send(channel, data)
     }
 
   socket.on('market_update', fwd('bot:marketUpdate'))
@@ -248,29 +251,29 @@ function createWindow(settings: Record<string, string>): void {
     }
   })
 
-  mainWindow.on('close', (event) => {
+  window.on('close', (event) => {
     if (tray !== null) {
       event.preventDefault()
-      mainWindow.hide()
+      window.hide()
       return
     }
   })
 
-  mainWindow.on('closed', () => {
+  window.on('closed', () => {
     socket.off('market_update')
     socket.off('trade_executed')
     socket.off('balance_update')
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    window.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -425,6 +428,87 @@ app.whenReady().then(async () => {
   handleIPC('bot:getDecoupledWhitelist', async () => [])
   handleIPC('bot:saveDecoupledWhitelist', async () => true)
   handleIPC('bot:toggleBotManualMode', async () => true)
+
+  // ---------------------------------------------------------------------------
+  // Auto-updater configuration
+  // ---------------------------------------------------------------------------
+
+  // Configure autoUpdater
+  autoUpdater.autoDownload = false // Let user choose when to download
+  autoUpdater.allowPrerelease = false // Only stable releases
+  autoUpdater.autoInstallOnAppQuit = true // Install on quit if update downloaded
+  autoUpdater.fullChangelog = true // Include full changelog in update info
+
+  // Forward auto-updater events to renderer
+  const sendUpdateStatus = (channel: string, data?: unknown): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(channel, data)
+    }
+  }
+
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdateStatus('update:checking')
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    sendUpdateStatus('update:available', info)
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    sendUpdateStatus('update:not-available', info)
+  })
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    sendUpdateStatus('update:progress', progressObj)
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    sendUpdateStatus('update:downloaded', info)
+  })
+
+  autoUpdater.on('error', (error) => {
+    sendUpdateStatus('update:error', error.message)
+  })
+
+  // IPC handlers for update actions
+  handleIPC('update:check', async () => {
+    try {
+      // Check for updates, will trigger events above
+      const result = await autoUpdater.checkForUpdates()
+      return { success: true, data: result?.updateInfo }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  handleIPC('update:download', async () => {
+    try {
+      // Download the update, will trigger progress events
+      await autoUpdater.downloadUpdate()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  handleIPC('update:install', async () => {
+    try {
+      // Quit and install the update
+      autoUpdater.quitAndInstall()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  handleIPC('update:get-current-version', async () => {
+    return {
+      version: app.getVersion(),
+      name: app.getName(),
+      platform: process.platform,
+      arch: process.arch
+    }
+  })
 
   createWindow(initialSettings)
 

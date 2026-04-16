@@ -1,5 +1,13 @@
 import React from 'react'
-import { BarChart2, Settings, FileText, Microscope, DollarSign, Clock } from 'lucide-react'
+import {
+  BarChart2,
+  Settings,
+  FileText,
+  Microscope,
+  DollarSign,
+  Clock,
+  RefreshCw
+} from 'lucide-react'
 import { RobotIcon } from '@renderer/components/icons/RobotIcon'
 import { useAppContext } from '@renderer/context/AppContext'
 
@@ -19,7 +27,9 @@ export function Sidebar(): React.ReactElement {
     marketData,
     handleAddSymbol,
     handleRemoveSymbol,
-    stripUSDT
+    stripUSDT,
+    checkForUpdates,
+    updateChecking
   } = useAppContext()
 
   return (
@@ -58,14 +68,26 @@ export function Sidebar(): React.ReactElement {
                   : versions.frontend !== versions.backend
 
               return (
-                <div
-                  className={`mt-1.5 flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
-                    isMismatch ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700/50 text-slate-500'
-                  }`}
-                  title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${isMismatch ? `(Expected v${versions.expectedBackend})` : ''}`}
-                >
-                  {isMismatch ? '⚠ ' : ''}
-                  UI v{versions.frontend} / Srv v{versions.backend}
+                <div className="flex items-center gap-1 mt-1.5">
+                  <div
+                    className={`flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full w-fit ${
+                      isMismatch
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-slate-700/50 text-slate-500'
+                    }`}
+                    title={`UI: v${versions.frontend}  |  Server: v${versions.backend} ${isMismatch ? `(Expected v${versions.expectedBackend})` : ''}`}
+                  >
+                    {isMismatch ? '⚠ ' : ''}
+                    UI v{versions.frontend} / Srv v{versions.backend}
+                  </div>
+                  <button
+                    onClick={checkForUpdates}
+                    disabled={updateChecking}
+                    className="text-slate-500 hover:text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Check for updates"
+                  >
+                    <RefreshCw size={10} className={updateChecking ? 'animate-spin' : ''} />
+                  </button>
                 </div>
               )
             })()}
