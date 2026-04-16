@@ -441,18 +441,29 @@ app.whenReady().then(async () => {
 
   // Set feed URL for GitHub releases
   if (app.isPackaged) {
-    autoUpdater.setFeedURL({
+    const githubToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN
+    const feedUrlConfig: any = {
       provider: 'github',
       owner: 'Darrylsh',
       repo: 'Grid_DCA_Bot',
       releaseType: 'release',
       channel: 'latest'
-    })
-  }
+    }
 
-  console.log(
-    `[AutoUpdater] Configured for GitHub: Darrylsh/Grid_DCA_Bot, app version: ${app.getVersion()}, packaged: ${app.isPackaged}`
-  )
+    // Add token if available (required for private repositories)
+    if (githubToken) {
+      feedUrlConfig.token = githubToken
+      console.log('[AutoUpdater] GitHub token found (private repo support)')
+    } else {
+      console.warn('[AutoUpdater] No GitHub token found - required for private repositories')
+    }
+
+    autoUpdater.setFeedURL(feedUrlConfig)
+
+    console.log(
+      `[AutoUpdater] Configured for GitHub: Darrylsh/Grid_DCA_Bot, app version: ${app.getVersion()}, packaged: ${app.isPackaged}, token: ${githubToken ? 'present' : 'missing'}`
+    )
+  }
 
   // Forward auto-updater events to renderer
   const sendUpdateStatus = (channel: string, data?: unknown): void => {
@@ -488,7 +499,23 @@ app.whenReady().then(async () => {
 
   autoUpdater.on('error', (error) => {
     console.error(`[AutoUpdater] Error: ${error.message}`)
-    sendUpdateStatus('update:error', error.message)
+    // Log additional error details for debugging
+    if (error.stack) {
+      console.error(`[AutoUpdater] Stack: ${error.stack}`)
+    }
+
+    // Check for common GitHub errors
+    let userMessage = error.message
+    if (error.message.includes('404')) {
+      userMessage =
+        'GitHub repository not found or inaccessible. Check: 1) Repository is public, or 2) GitHub token has "repo" scope for private repos.'
+    } else if (error.message.includes('token') || error.message.includes('authentication')) {
+      userMessage =
+        'GitHub authentication failed. Ensure GH_TOKEN environment variable is set with "repo" scope.'
+    }
+
+    console.error(`[AutoUpdater] User message: ${userMessage}`)
+    sendUpdateStatus('update:error', userMessage)
   })
 
   // IPC handlers for update actions
