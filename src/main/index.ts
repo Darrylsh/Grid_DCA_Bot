@@ -439,8 +439,19 @@ app.whenReady().then(async () => {
   autoUpdater.autoInstallOnAppQuit = true // Install on quit if update downloaded
   autoUpdater.fullChangelog = true // Include full changelog in update info
 
+  // Set feed URL for GitHub releases
+  if (app.isPackaged) {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'Darrylsh',
+      repo: 'Grid_DCA_Bot',
+      releaseType: 'release',
+      channel: 'latest'
+    })
+  }
+
   console.log(
-    `[AutoUpdater] Configured for GitHub: Darrylsh/Grid_DCA_Bot, app version: ${app.getVersion()}`
+    `[AutoUpdater] Configured for GitHub: Darrylsh/Grid_DCA_Bot, app version: ${app.getVersion()}, packaged: ${app.isPackaged}`
   )
 
   // Forward auto-updater events to renderer
@@ -484,6 +495,13 @@ app.whenReady().then(async () => {
   handleIPC('update:check', async () => {
     try {
       console.log('[AutoUpdater] Manual update check requested')
+
+      // Skip update checks in development mode (not packaged)
+      if (!app.isPackaged) {
+        console.log('[AutoUpdater] Skipping update check in development mode')
+        return { success: false, error: 'Auto-update is disabled in development mode' }
+      }
+
       // Check for updates, will trigger events above
       const result = await autoUpdater.checkForUpdates()
       console.log(`[AutoUpdater] Update check result: ${result ? 'update available' : 'no update'}`)

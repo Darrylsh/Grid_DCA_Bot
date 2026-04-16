@@ -244,9 +244,13 @@ export const useAppState = () => {
       window.api.onUpdateError?.(handleUpdateError)
 
       // Get current electron app version
-      window.api.getCurrentVersion?.().then((v) => {
-        setElectronVersion(v?.version || '')
-      })
+      if (typeof window.api.getCurrentVersion === 'function') {
+        window.api.getCurrentVersion().then((v) => {
+          setElectronVersion(v?.version || '')
+        })
+      } else {
+        setElectronVersion('')
+      }
     }
     return () => {
       if (statsInterval) clearInterval(statsInterval)
@@ -307,7 +311,13 @@ export const useAppState = () => {
 
   const checkForUpdates = async (): Promise<void> => {
     try {
-      const result = await window.api.checkForUpdates?.()
+      // Check if API method exists
+      if (typeof window.api.checkForUpdates !== 'function') {
+        setUpdateError('Auto-update not available in this version')
+        return
+      }
+
+      const result = await window.api.checkForUpdates()
       if (!result?.success) {
         setUpdateError(result?.error || 'Update check failed')
       }
@@ -318,7 +328,13 @@ export const useAppState = () => {
 
   const downloadUpdate = async (): Promise<void> => {
     try {
-      const result = await window.api.downloadUpdate?.()
+      // Check if API method exists
+      if (typeof window.api.downloadUpdate !== 'function') {
+        setUpdateError('Auto-update not available in this version')
+        return
+      }
+
+      const result = await window.api.downloadUpdate()
       if (!result?.success) {
         setUpdateError(result?.error || 'Download failed')
       }
@@ -329,7 +345,13 @@ export const useAppState = () => {
 
   const installUpdate = async (): Promise<void> => {
     try {
-      const result = await window.api.installUpdate?.()
+      // Check if API method exists
+      if (typeof window.api.installUpdate !== 'function') {
+        setUpdateError('Auto-update not available in this version')
+        return
+      }
+
+      const result = await window.api.installUpdate()
       if (!result?.success) {
         setUpdateError(result?.error || 'Installation failed')
       }
