@@ -14,8 +14,11 @@ import { handleGridSellFill } from './grid-engine'
 import { botEvents } from './bot-events'
 
 // Host fallback configuration
-const BINANCE_HOSTS = ['api.binance.com', 'api.binance.us']
+const BINANCE_HOSTS = process.env['BINANCE_HOST']
+  ? [process.env['BINANCE_HOST']]
+  : ['api.binance.com', 'api.binance.us']
 let activeHost = BINANCE_HOSTS[0]
+console.log(`[WEBSOCKET] BINANCE_HOSTS: ${BINANCE_HOSTS.join(', ')}, activeHost: ${activeHost}`)
 
 // WebSocket state
 let wsClient: any = null
@@ -42,6 +45,8 @@ const binanceRestRequestToHost = (
 
     const queryString = Object.keys(params).length ? new URLSearchParams(params).toString() : ''
     const fullPath = queryString ? `${reqPath}?${queryString}` : reqPath
+
+    console.log(`[USER DATA STREAM] Using host ${hostname} for ${method} ${reqPath}`)
 
     const options = {
       hostname,
@@ -106,6 +111,7 @@ export const binanceRestRequest = async (
       console.log(`[USER DATA STREAM] Switched to ${activeHost}.`)
       return result
     }
+    console.log(`[USER DATA STREAM] ${activeHost} failed with error: ${e.message}`)
     throw e
   }
 }
@@ -124,6 +130,7 @@ export const startUserDataStream = async (): Promise<void> => {
     console.log('[USER DATA STREAM] No API credentials — skipping. Fill detection disabled.')
     return
   }
+  console.log(`[USER DATA STREAM] API key present (first 5 chars: ${apiKey.substring(0, 5)}...)`)
 
   let listenKey: string
   let udWs: WebSocket | null = null

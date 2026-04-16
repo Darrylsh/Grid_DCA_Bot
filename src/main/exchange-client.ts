@@ -14,7 +14,11 @@ dotenv.config({ path: path.join(__dirname, '../../.env') })
 
 const apiKey = process.env['BINANCE_API_KEY']
 const apiSecret = process.env['BINANCE_API_SECRET']
-const client = apiKey ? new Spot(apiKey, apiSecret) : new Spot()
+const baseURL = process.env['BINANCE_HOST'] ? `https://${process.env['BINANCE_HOST']}` : undefined
+console.log(`[EXCHANGE] API key present: ${!!apiKey}, baseURL: ${baseURL || 'default'}`)
+const client = apiKey
+  ? new Spot(apiKey, apiSecret, { baseURL })
+  : new Spot(undefined, undefined, { baseURL })
 
 // Exchange lot/tick size filters
 let symbolFilters: Record<string, Filter> = {}

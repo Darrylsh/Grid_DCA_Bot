@@ -5,7 +5,7 @@
 import { EventEmitter } from 'events'
 import { GridState, GridLevel } from './types'
 import { getGridStep } from './settings-manager'
-import { safeDivide } from './utils'
+import { safeDivide, getAvgEntryPrice } from './utils'
 import { getGridState, getGridLevels, getTrailingStop, getBotStartTime } from './state-manager'
 
 export const botEvents = new EventEmitter()
@@ -41,7 +41,7 @@ export const broadcastMarketUpdate = (symbol: string, currentPrice: number): voi
   let baseUnrealizedPnl = 0
   let baseUnrealizedRoi = 0
   if (state) {
-    const avgEntryPrice = state.baseEntryCost / state.baseQuantity
+    const avgEntryPrice = getAvgEntryPrice(state)
     // Use actual base quantity; if 0 (corrupted), PnL is 0
     const baseQty = state.baseQuantity > 0 ? state.baseQuantity : 0
     baseUnrealizedPnl = (currentPrice - avgEntryPrice) * baseQty
@@ -72,6 +72,13 @@ export const broadcastMarketUpdate = (symbol: string, currentPrice: number): voi
       // Use the current floating base price as the reference, not the original entry cost
       activeSharePnl = (currentPrice - state.basePrice) * state.baseQuantity
     }
+  }
+
+  // Debug log for market updates (only for symbols with base share)
+  if (state) {
+    console.log(
+      `[MARKET UPDATE] ${symbol}: $${currentPrice.toFixed(4)}, base: $${state.basePrice.toFixed(4)}, levels: ${levels.length}`
+    )
   }
 
   botEvents.emit('market_update', {

@@ -21,9 +21,12 @@ import {
 } from './settings-manager'
 import {
   getGridState as getGridStateFromState,
+  setGridState,
   deleteGridState as deleteGridStateFromState,
   clearAllGridState,
   getGridLevels,
+  setGridLevels,
+  addGridLevel,
   clearGridLevels,
   getLastPrice,
   getAllLastPrices,
@@ -41,7 +44,8 @@ import {
 import {
   updateFilters as updateFiltersFromClient,
   fetchBalances as fetchBalancesFromClient,
-  getApiKey
+  getApiKey,
+  setBalanceEventEmitter
 } from './exchange-client'
 import { broadcastMarketUpdate, botEvents } from './bot-events'
 import { registerBaseShare, sellBaseShare } from './trade-executor'
@@ -86,22 +90,31 @@ export const updateSettingsLocally = (newSettings: Record<string, string>): void
 const loadBotState = async (): Promise<void> => {
   // Load grid states for current mode
   const savedStates = await getGridStateFromDb(getCurrentModeFromSettings())
-  const currentGridState = getGridStateFromState() as Record<string, GridState>
-  Object.assign(currentGridState, savedStates)
 
-  // Clear any states from a different mode
+  // Clear existing state for current mode
+  const currentGridState = getGridStateFromState() as Record<string, GridState>
   for (const sym of Object.keys(currentGridState)) {
     if (!savedStates[sym]) deleteGridStateFromState(sym)
   }
 
+  // Set new grid states
+  for (const [symbol, state] of Object.entries(savedStates)) {
+    setGridState(symbol, state)
+  }
+
   // Load active grid levels
   const allLevels = await getAllActiveGridLevels(getCurrentModeFromSettings())
+
+  // Clear existing grid levels
   const currentGridLevels = getGridLevels() as Record<string, GridLevel[]>
-  for (const sym of Object.keys(currentGridLevels)) currentGridLevels[sym] = []
+  for (const sym of Object.keys(currentGridLevels)) {
+    setGridLevels(sym, [])
+  }
+
+  // Add loaded grid levels
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   allLevels.forEach((row: any) => {
-    if (!currentGridLevels[row.symbol]) currentGridLevels[row.symbol] = []
-    currentGridLevels[row.symbol].push({
+    addGridLevel(row.symbol, {
       id: row.id,
       symbol: row.symbol,
       mode: row.mode,
@@ -115,7 +128,7 @@ const loadBotState = async (): Promise<void> => {
   })
 
   console.log(
-    `[BOT] Loaded ${Object.keys(currentGridState).length} base shares and ${allLevels.length} grid levels for ${getCurrentModeFromSettings()} mode.`
+    `[BOT] Loaded ${Object.keys(savedStates).length} base shares and ${allLevels.length} grid levels for ${getCurrentModeFromSettings()} mode.`
   )
 }
 
@@ -259,7 +272,10 @@ export const startBot = async (): Promise<void> => {
     `[BOT] Mode: ${getCurrentModeFromSettings()}, Share: $${getShareAmount()}, Grid Step: ${getGridStep()}%`
   )
 
-  loadBotState()
+  await loadBotState()
+
+  // Set up event emitter for balance updates
+  setBalanceEventEmitter(botEvents)
 
   await updateFiltersFromClient()
   await fetchBalancesFromClient()
