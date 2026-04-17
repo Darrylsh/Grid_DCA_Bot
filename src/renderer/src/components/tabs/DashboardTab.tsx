@@ -53,7 +53,7 @@ export function DashboardTab(): React.ReactElement {
   const annualProfit = apyFraction * principal
 
   return (
-    <>
+    <div className="min-h-full flex flex-col">
       {/* Stats Grid */}
       <div className="grid grid-cols-7 gap-2 mb-8 text-[10px]">
         {[
@@ -420,7 +420,7 @@ export function DashboardTab(): React.ReactElement {
       </div>
 
       {/* Activity Log */}
-      <div className="bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl overflow-hidden shadow-2xl">
+      <div className="flex-1 flex flex-col min-h-0 bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl overflow-hidden shadow-2xl">
         <div className="p-4 border-b border-slate-700/50 bg-slate-800/50 flex justify-between items-center">
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
             <Activity size={14} className="text-emerald-400" /> Recent Activity
@@ -433,7 +433,7 @@ export function DashboardTab(): React.ReactElement {
             Clear
           </button>
         </div>
-        <div className="max-h-48 overflow-y-auto p-4 flex flex-col gap-2 font-mono text-[13px] custom-scrollbar bg-slate-900/40">
+        <div className="flex-1 min-h-32 overflow-y-auto p-4 flex flex-col gap-2 font-mono text-[13px] custom-scrollbar bg-slate-900/40">
           {logs.length === 0 ? (
             <div className="text-slate-600 italic">No activity recorded yet...</div>
           ) : (
@@ -487,6 +487,6 @@ export function DashboardTab(): React.ReactElement {
           )}
         </div>
       </div>
-    </>
+    </div>
   )
 }
