@@ -1,6 +1,6 @@
 {
   "name": "algobot-desktop",
-  "version": "1.10.8",
+  "version": "1.10.9",
   "expectedBackendVersion": "1.9.3",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
