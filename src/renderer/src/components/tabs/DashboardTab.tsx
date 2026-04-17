@@ -53,7 +53,7 @@ export function DashboardTab(): React.ReactElement {
   const annualProfit = apyFraction * principal
 
   return (
-    <div className="min-h-full flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Stats Grid */}
       <div className="grid grid-cols-7 gap-2 mb-8 text-[10px]">
         {[

@@ -36,86 +36,94 @@ export default function App(): React.ReactElement {
         className={`flex-1 flex flex-col h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-900 p-8 overflow-y-auto ${!isConnected ? 'opacity-80 pointer-events-none' : ''}`}
       >
         <Header />
-        <div className="flex-1 overflow-y-auto w-full px-4 pt-4 custom-scrollbar">
+        <div className="flex-1 overflow-hidden w-full px-4 pt-4 flex flex-col min-h-0">
           {activeTab === 'dashboard' && (
-            <ErrorBoundary
-              fallback={
-                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
-                  <div className="text-rose-400 text-lg font-semibold mb-2">Dashboard Error</div>
-                  <p className="text-slate-400 mb-4">
-                    The dashboard encountered an error. Try switching tabs or reloading.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              }
-            >
-              <DashboardTab />
-            </ErrorBoundary>
+            <div className="flex-1 flex flex-col min-h-0">
+              <ErrorBoundary
+                fallback={
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
+                    <div className="text-rose-400 text-lg font-semibold mb-2">Dashboard Error</div>
+                    <p className="text-slate-400 mb-4">
+                      The dashboard encountered an error. Try switching tabs or reloading.
+                    </p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                }
+              >
+                <DashboardTab />
+              </ErrorBoundary>
+            </div>
           )}
           {activeTab === 'backtest' && (
-            <ErrorBoundary
-              fallback={
-                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
-                  <div className="text-rose-400 text-lg font-semibold mb-2">Backtest Error</div>
-                  <p className="text-slate-400 mb-4">
-                    The backtest lab encountered an error. Try switching tabs or reloading.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              }
-            >
-              <BacktestTab />
-            </ErrorBoundary>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <ErrorBoundary
+                fallback={
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
+                    <div className="text-rose-400 text-lg font-semibold mb-2">Backtest Error</div>
+                    <p className="text-slate-400 mb-4">
+                      The backtest lab encountered an error. Try switching tabs or reloading.
+                    </p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                }
+              >
+                <BacktestTab />
+              </ErrorBoundary>
+            </div>
           )}
           {activeTab === 'reports' && (
-            <ErrorBoundary
-              fallback={
-                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
-                  <div className="text-rose-400 text-lg font-semibold mb-2">Reports Error</div>
-                  <p className="text-slate-400 mb-4">
-                    The reports tab encountered an error. Try switching tabs or reloading.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              }
-            >
-              <ReportsTab />
-            </ErrorBoundary>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <ErrorBoundary
+                fallback={
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
+                    <div className="text-rose-400 text-lg font-semibold mb-2">Reports Error</div>
+                    <p className="text-slate-400 mb-4">
+                      The reports tab encountered an error. Try switching tabs or reloading.
+                    </p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                }
+              >
+                <ReportsTab />
+              </ErrorBoundary>
+            </div>
           )}
           {activeTab === 'settings' && (
-            <ErrorBoundary
-              fallback={
-                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
-                  <div className="text-rose-400 text-lg font-semibold mb-2">Settings Error</div>
-                  <p className="text-slate-400 mb-4">
-                    The settings tab encountered an error. Try switching tabs or reloading.
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              }
-            >
-              <SettingsTab />
-            </ErrorBoundary>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <ErrorBoundary
+                fallback={
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-8 text-center">
+                    <div className="text-rose-400 text-lg font-semibold mb-2">Settings Error</div>
+                    <p className="text-slate-400 mb-4">
+                      The settings tab encountered an error. Try switching tabs or reloading.
+                    </p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                }
+              >
+                <SettingsTab />
+              </ErrorBoundary>
+            </div>
           )}
         </div>
       </main>
