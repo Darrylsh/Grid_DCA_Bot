@@ -8,7 +8,8 @@ import {
   getSettings,
   getGridState as getGridStateFromDb,
   getAllActiveGridLevels,
-  deleteGridState as deleteGridStateFromDb
+  deleteGridState as deleteGridStateFromDb,
+  deleteAllGridLevels
 } from './db'
 import { sendTelegramMessage } from './telegram'
 import { GridState, GridLevel } from './types'
@@ -204,6 +205,8 @@ export const deleteBaseShareLocally = async (symbol: string): Promise<void> => {
   setPriceHistory(symbol, [])
   deleteDelayedBuyState(symbol)
   await deleteGridStateFromDb(symbol, getCurrentModeFromSettings())
+  await deleteAllGridLevels(symbol, getCurrentModeFromSettings())
+  clearGridLevels(symbol)
   console.log(`[BASE SHARE] ${symbol}: Local record and DB state deleted.`)
   broadcastMarketUpdate(symbol, getLastPrice(symbol) || 0)
 }

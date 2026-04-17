@@ -5,13 +5,18 @@
 import { getShareAmount, getCurrentMode } from './settings-manager'
 import { GridState } from './types'
 import { getClient, getFilter, fetchBalances, getFeeRate } from './exchange-client'
-import { saveGridState, logTrade } from './db'
+import {
+  saveGridState,
+  logTrade,
+  deleteGridState as deleteGridStateFromDb,
+  deleteAllGridLevels
+} from './db'
 import {
   getGridState,
   setGridState,
   getLastPrice,
   deleteTrailingStop,
-  deleteGridState,
+  deleteGridState as deleteGridStateFromMemory,
   clearGridLevels as clearGridLevelsState
 } from './state-manager'
 import { roundToStep, safeDivide, getAvgEntryPrice } from './utils'
@@ -197,9 +202,12 @@ export const sellBaseShare = async (
   })
 
   // Delete grid state and trailing stop
-  deleteGridState(symbol)
+  deleteGridStateFromMemory(symbol)
   clearGridLevelsState(symbol)
   deleteTrailingStop(symbol)
+  // Delete from database
+  await deleteGridStateFromDb(symbol, currentMode)
+  await deleteAllGridLevels(symbol, currentMode)
 
   broadcastMarketUpdate(symbol, fillPrice)
 }
