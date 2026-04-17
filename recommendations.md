@@ -19,7 +19,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 - ⚠️ **Enable sandbox**: Line 108 sets `sandbox: false` – sandbox disabled due to backend connection issues
 - ✅ **Single instance lock**: Added `app.requestSingleInstanceLock()` with second-instance focus handling
 - ✅ **Auto-updater**: Implement `electron-updater` for automatic updates **COMPLETED** - GitHub releases with token management
-- **Global error handling**: Add unhandled rejection and exception handlers
+- ✅ **Global error handling**: Add unhandled rejection and exception handlers **COMPLETED** - Added to main process and headless server
 - **IPC validation**: Validate all IPC arguments with schemas (zod/joi) before processing
 
 ### Performance & Code Quality
@@ -227,7 +227,7 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 
 ### Medium Priority
 
-1. Improve accessibility attributes (ARIA labels, keyboard nav)
+1. ✅ Improve accessibility attributes ( ARIA labels - COMPLETED, keyboard nav)
 2. ✅ Add state management for shared data (Zustand/Context) **COMPLETED** - Created `AppContext` and `useAppState` hook
 3. ✅ Implement single instance lock in main process – COMPLETED
 4. ✅ Add React error boundaries – COMPLETED
@@ -235,7 +235,9 @@ Critical stability issues addressed in April 2026: division-by-zero safety, miss
 ### Low Priority
 
 1. ✅ Define missing `.custom-scrollbar` CSS class - COMPLETED
+
 - **✅ Native Dialogs**: Standard `window.confirm` replaced with OS-native message boxes **COMPLETED**
+
 3. ✅ Implement auto-updater - COMPLETED - GitHub releases with user-initiated updates
 4. ✅ Add system tray support - COMPLETED
 
@@ -313,7 +315,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 ### High Priority:
 
 1. **Add test infrastructure** - Jest/React Testing Library for components and hooks
-2. **Improve accessibility** - ARIA labels, keyboard navigation
+2. **Improve accessibility** - ✅ ARIA labels COMPLETED, keyboard navigation pending
 3. ✅ **Add React error boundaries** - COMPLETED
 
 ### Backend Priority:
@@ -349,6 +351,7 @@ The codebase demonstrates solid Electron security practices with context isolati
 - ✅ System tray integration
 - ✅ Auto-updater implementation with GitHub releases
 - ✅ React error boundaries
+- ✅ Global error handling - unhandled rejection/exception handlers in main process and headless server
 
 #### Backend
 
