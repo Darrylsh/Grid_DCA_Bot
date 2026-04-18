@@ -60,10 +60,24 @@ import { sellBaseShare } from './trade-executor'
 
 const client = getClient()
 
+// Per-symbol mutex to prevent concurrent processTick execution
+const tickLocks: Map<string, Promise<void>> = new Map()
+
 /**
  * Buy a new share and place a limit sell
  */
 export const executeGridBuy = async (symbol: string, currentPrice: number): Promise<void> => {
+  // Hard guard: re-check max grid levels right before executing
+  // This catches races where another tick already started a buy
+  const currentLevels = getGridLevels(symbol) as GridLevel[]
+  const maxLevels = getMaxGridLevels()
+  if (currentLevels.length >= maxLevels) {
+    console.log(
+      `[GRID BUY GUARD] ${symbol}: Already at max grid levels (${currentLevels.length} >= ${maxLevels}). Aborting buy.`
+    )
+    return
+  }
+
   const shareAmount = getShareAmount()
   const gridStep = getGridStep()
   const stepMultiplier = gridStep / 100
@@ -299,6 +313,21 @@ export const handleGridSellFill = async (
  * Core price tick handler
  */
 export const processTick = async (symbol: string, currentPrice: number): Promise<void> => {
+  // Serialize ticks per-symbol to prevent concurrent grid buys
+  const prev = tickLocks.get(symbol) || Promise.resolve()
+  let releaseLock: () => void
+  const lockPromise = new Promise<void>((resolve) => { releaseLock = resolve })
+  tickLocks.set(symbol, lockPromise)
+  await prev
+
+  try {
+    await processTickInner(symbol, currentPrice)
+  } finally {
+    releaseLock!()
+  }
+}
+
+const processTickInner = async (symbol: string, currentPrice: number): Promise<void> => {
   const currentMode = getCurrentMode()
   setLastPrice(symbol, currentPrice)
 
