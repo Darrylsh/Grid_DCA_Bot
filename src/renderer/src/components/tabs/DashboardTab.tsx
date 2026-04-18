@@ -256,7 +256,7 @@ export function DashboardTab(): React.ReactElement {
                               <span className="text-[9px] text-slate-500">
                                 Targets:{' '}
                                 {[...levels]
-                                  .reverse()
+                                  .sort((a, b) => b.id - a.id)
                                   .slice(0, 2)
                                   .map((l) => `$${l.sellPrice?.toFixed(4)}`)
                                   .join(', ')}
