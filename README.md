@@ -54,13 +54,17 @@ CORS_ORIGIN=*
 GH_TOKEN=your_github_token_here
 ```
 
-**Note for Packaged Apps**: When using the packaged application (`.exe`), the `.env` file should be placed in the Electron user data directory:
+**Note for Packaged Apps**: When using the packaged application (`.exe`), the `.env` file can be placed in any of these locations (searched in order):
 
-- **Windows**: `%APPDATA%\algobot-desktop\.env`
-- **macOS**: `~/Library/Application Support/algobot-desktop/.env`
-- **Linux**: `~/.config/algobot-desktop/.env`
+1. **User Data Directory** (Recommended):
+   - **Windows**: `%APPDATA%\algobot-desktop\.env`
+   - **macOS**: `~/Library/Application Support/algobot-desktop/.env`
+   - **Linux**: `~/.config/algobot-desktop/.env`
 
-The application logs the exact path on startup. During development, `.env` should be in the project root.
+2. **Executable Directory**: Same folder as the `.exe` file
+3. **Current Working Directory**: Where the app was launched from
+
+The application logs the search process with `[ENV]` messages. During development, `.env` should be in the project root.
 
 ## 🚀 Auto-Updater Setup
 

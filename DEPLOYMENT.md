@@ -133,7 +133,10 @@ CORS_ORIGIN=*
 The Electron app loads `.env` from different locations depending on the environment:
 
 - **Development**: `[project-root]/.env` (same folder as package.json)
-- **Production (Packaged)**: `[user-data-directory]/.env` (Electron's userData folder)
+- **Production (Packaged)**: Searches in this order:
+  1. **User Data Directory**: `[user-data-directory]/.env` (Electron's userData folder)
+  2. **Executable Directory**: Same folder as the `.exe` file
+  3. **Current Working Directory**: Where the app was launched from
 
 ### Finding the User Data Directory:
 
@@ -143,11 +146,11 @@ The Electron app loads `.env` from different locations depending on the environm
 
 ### For End Users:
 
-1. After installing the app, create a `.env` file in the appropriate user data directory
+1. After installing the app, create a `.env` file in **any** of the above locations
 2. Copy the configuration from `.env.example` and fill in your values
 3. Restart the application
 
-The app will log the exact path on startup: `[ENV] Loading .env from: [path]`
+The app will log the search process on startup with lines starting with `[ENV]`. The final loaded path will be shown.
 
 ## Security Considerations for Public Distribution
 
