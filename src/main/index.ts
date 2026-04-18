@@ -45,7 +45,7 @@ process.stdout.write = (
 
 import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -53,13 +53,41 @@ import icon from '../../resources/icon.png?asset'
 import { io as ioClient } from 'socket.io-client'
 import * as dotenv from 'dotenv'
 
-const envPath = is.dev ? join(__dirname, '../../.env') : join(app.getPath('userData'), '.env')
-console.log(`[ENV] Loading .env from: ${envPath} (is.dev: ${is.dev})`)
-if (existsSync(envPath)) {
+let envPath: string | null = null
+
+if (is.dev) {
+  // Development: always use project root .env
+  envPath = join(__dirname, '../../.env')
+  console.log(`[ENV] Development mode, using project .env: ${envPath}`)
+} else {
+  // Production: try multiple locations
+  const possiblePaths = [
+    join(app.getPath('userData'), '.env'), // User data directory
+    join(dirname(app.getPath('exe')), '.env'), // Executable directory
+    join(process.cwd(), '.env') // Current working directory
+  ]
+
+  console.log(`[ENV] Production mode, searching for .env in:`)
+  possiblePaths.forEach((path, i) => console.log(`  ${i + 1}. ${path}`))
+
+  for (const path of possiblePaths) {
+    if (existsSync(path)) {
+      envPath = path
+      console.log(`[ENV] Found .env at: ${path}`)
+      break
+    }
+  }
+
+  if (!envPath) {
+    console.warn(`[ENV] No .env file found in any location. Using default environment variables.`)
+  }
+}
+
+if (envPath && existsSync(envPath)) {
   dotenv.config({ path: envPath })
   console.log(`[ENV] Loaded environment variables from ${envPath}`)
-} else {
-  console.warn(`[ENV] .env file not found at ${envPath}. Using default environment variables.`)
+} else if (envPath) {
+  console.warn(`[ENV] .env file not found at ${envPath}`)
 }
 
 // Single instance lock
@@ -78,6 +106,8 @@ app.on('second-instance', () => {
 })
 
 const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://localhost:3030'
+console.log(`[ENV] HEADLESS_SERVER_URL: ${process.env.HEADLESS_SERVER_URL || 'NOT SET'}`)
+console.log(`[ENV] Using SERVER_URL: ${SERVER_URL}`)
 const socket = ioClient(SERVER_URL)
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
