@@ -333,13 +333,14 @@ const processTickInner = async (symbol: string, currentPrice: number): Promise<v
 
   // Update price history for momentum detection
   if (getDynamicGridEnabled()) {
+    const now = Date.now()
+    const windowMs = getMomentumWindow() * 1000 // Convert seconds to ms
     const history = getPriceHistory(symbol)
-    const updatedHistory = [...history, currentPrice]
-    const window = getMomentumWindow()
-    if (updatedHistory.length > window) {
-      updatedHistory.shift()
-    }
-    setPriceHistory(symbol, updatedHistory)
+    history.push({ price: currentPrice, time: now })
+    // Prune entries older than the time window (keep a small buffer for edge cases)
+    const cutoff = now - windowMs * 1.5
+    const pruned = history.filter((p) => p.time >= cutoff)
+    setPriceHistory(symbol, pruned)
   }
 
   const stateOrRecord = getGridState(symbol)
@@ -474,11 +475,16 @@ const processTickInner = async (symbol: string, currentPrice: number): Promise<v
         // --- DYNAMIC GRID MOMENTUM CHECK ---
         let shouldDelay = false
         if (getDynamicGridEnabled()) {
-          const window = getMomentumWindow()
+          const windowSec = getMomentumWindow()
+          const windowMs = windowSec * 1000
+          const now = Date.now()
           const history = getPriceHistory(symbol)
-          if (history && history.length >= window) {
-            const oldestPrice = history[0]
-            const newestPrice = history[history.length - 1]
+          // Find the oldest entry within the time window
+          const windowStart = now - windowMs
+          const inWindow = history.filter((p) => p.time >= windowStart)
+          if (inWindow.length >= 2) {
+            const oldestPrice = inWindow[0].price
+            const newestPrice = inWindow[inWindow.length - 1].price
             const momentumPct = ((newestPrice - oldestPrice) / oldestPrice) * 100
             const threshold = getMomentumThresholdPct()
             if (momentumPct <= threshold) {
@@ -490,7 +496,7 @@ const processTickInner = async (symbol: string, currentPrice: number): Promise<v
                 triggeredAt: Date.now()
               })
               console.log(
-                `[DYNAMIC] ${symbol}: Negative momentum ${momentumPct.toFixed(2)}% ≤ ${threshold.toFixed(2)}%. Delaying buy. Watching for rebound.`
+                `[DYNAMIC] ${symbol}: Negative momentum ${momentumPct.toFixed(2)}% over ${windowSec}s ≤ ${threshold.toFixed(2)}%. Delaying buy. Watching for rebound.`
               )
             }
           }

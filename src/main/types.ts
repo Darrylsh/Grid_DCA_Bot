@@ -32,6 +32,11 @@ export interface TrailingStop {
   stopPrice: number // trailHigh * (1 - stopPct)
 }
 
+export interface PricePoint {
+  price: number
+  time: number // Date.now() timestamp
+}
+
 export interface DelayedBuyState {
   active: boolean
   triggerPrice: number // Original grid trigger price where delay started

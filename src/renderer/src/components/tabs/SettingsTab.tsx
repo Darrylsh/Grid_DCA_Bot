@@ -205,19 +205,19 @@ export function SettingsTab(): React.ReactElement {
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
-              Momentum Window (ticks)
+              Momentum Window (seconds)
             </label>
             <input
               type="number"
-              value={settings.momentum_window || '10'}
-              min="2"
-              max="100"
-              step="1"
+              value={settings.momentum_window || '60'}
+              min="10"
+              max="300"
+              step="5"
               onChange={(e) => updateSetting('momentum_window', e.target.value)}
               className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm w-full focus:outline-none focus:border-indigo-500 transition-colors"
             />
             <p className="text-xs text-slate-500 italic">
-              Number of recent price ticks to calculate momentum.
+              How far back (in seconds) to measure price momentum.
             </p>
           </div>
         </div>
@@ -238,7 +238,7 @@ export function SettingsTab(): React.ReactElement {
               <span className="absolute right-3 top-3 text-slate-500 font-bold">%</span>
             </div>
             <p className="text-xs text-slate-500 italic">
-              Negative price change over window to trigger delay (e.g. -0.5%).
+              Negative price change over the window to trigger delay (e.g. -0.5%).
             </p>
           </div>
           <div className="flex flex-col gap-2">

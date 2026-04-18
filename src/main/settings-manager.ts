@@ -11,7 +11,7 @@ const defaultSettings: Record<string, string> = {
   grid_step_percent: '3',
   max_grid_levels: '10',
   dynamic_grid_enabled: 'false',
-  momentum_window: '10',
+  momentum_window: '60',
   momentum_threshold_pct: '-0.5',
   rebound_threshold_pct: '0.25',
   dynamic_mode_timeout_min: '30'
@@ -103,8 +103,8 @@ export const getDynamicGridEnabled = (): boolean => {
 }
 
 export const getMomentumWindow = (): number => {
-  const v = parseInt(currentSettings.momentum_window || '10')
-  return isNaN(v) || v <= 0 ? 10 : v
+  const v = parseInt(currentSettings.momentum_window || '60')
+  return isNaN(v) || v <= 0 ? 60 : v
 }
 
 export const getMomentumThresholdPct = (): number => {

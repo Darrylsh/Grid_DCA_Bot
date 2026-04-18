@@ -2,14 +2,14 @@
 // State Manager for Grid DCA Bot
 // ---------------------------------------------------------------------------
 
-import { GridState, GridLevel, TrailingStop, DelayedBuyState } from './types'
+import { GridState, GridLevel, TrailingStop, DelayedBuyState, PricePoint } from './types'
 
 // In-memory state containers
 let gridState: Record<string, GridState> = {}
 let gridLevels: Record<string, GridLevel[]> = {}
 let lastPrices: Record<string, number> = {}
 let trailingStops: Record<string, TrailingStop> = {}
-let priceHistories: Record<string, number[]> = {}
+let priceHistories: Record<string, PricePoint[]> = {}
 let delayedBuyStates: Record<string, DelayedBuyState> = {}
 
 // Cooldown state
@@ -120,17 +120,17 @@ export const deleteTrailingStop = (symbol: string): void => {
 // Price History Management (for momentum calculation)
 // ---------------------------------------------------------------------------
 
-export const getPriceHistory = (symbol: string): number[] => {
+export const getPriceHistory = (symbol: string): PricePoint[] => {
   return priceHistories[symbol] || []
 }
 
-export const setPriceHistory = (symbol: string, history: number[]): void => {
+export const setPriceHistory = (symbol: string, history: PricePoint[]): void => {
   priceHistories[symbol] = history
 }
 
-export const addPriceToHistory = (symbol: string, price: number): void => {
+export const addPriceToHistory = (symbol: string, point: PricePoint): void => {
   if (!priceHistories[symbol]) priceHistories[symbol] = []
-  priceHistories[symbol].push(price)
+  priceHistories[symbol].push(point)
 }
 
 // ---------------------------------------------------------------------------

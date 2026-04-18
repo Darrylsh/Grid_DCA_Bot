@@ -48,7 +48,7 @@ import {
 
 import { runBacktest } from './backtest'
 
-export const BACKEND_VERSION = '1.9.4'
+export const BACKEND_VERSION = '1.10.0'
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
 
