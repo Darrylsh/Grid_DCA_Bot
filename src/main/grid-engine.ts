@@ -428,7 +428,9 @@ const processTickInner = async (symbol: string, currentPrice: number): Promise<v
           if (Date.now() - (getLevelCooldown(cooldownKey) || 0) > LEVEL_COOLDOWN_MS) {
             // LEVEL_COOLDOWN_MS
             setLevelCooldown(cooldownKey, Date.now())
-            executeGridBuy(symbol, currentPrice).catch(console.error)
+            try {
+              await executeGridBuy(symbol, currentPrice)
+            } catch (e) { console.error(e) }
           }
         }
       } else {
@@ -498,7 +500,9 @@ const processTickInner = async (symbol: string, currentPrice: number): Promise<v
           console.log(
             `[GRID DOWN] ${symbol}: Price $${currentPrice.toFixed(4)} hit next buy trigger $${nextBuyTrigger.toFixed(4)} (${gridStep}% below $${referencePrice.toFixed(4)})`
           )
-          executeGridBuy(symbol, currentPrice).catch(console.error)
+          try {
+            await executeGridBuy(symbol, currentPrice)
+          } catch (e) { console.error(e) }
         }
       } else {
         console.log(
