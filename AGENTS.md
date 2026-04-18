@@ -15,13 +15,13 @@ For bug fixes that only affect one side (frontend or backend), use **patch** inc
 
 **Current Versions (as of April 2026):**
 
-- Frontend: 1.10.6 (package.json)
-- Backend: 1.9.1 (headless-server.ts)
-- Expected Backend: 1.9.1 (package.json)
+- Frontend: 1.11.0 (package.json)
+- Backend: 1.10.0 (headless-server.ts)
+- Expected Backend: 1.10.0 (package.json)
 
 ## Project Architecture Reference
 
-For detailed system architecture and deployment procedures, refer to [BOT_ARCHITECTURE.md](./BOT_ARCHITECTURE.md).
+For detailed system architecture, refer to [BOT_ARCHITECTURE.md](./BOT_ARCHITECTURE.md). For deployment procedures and configuration, refer to [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Agent-Specific Instructions
 
@@ -30,7 +30,7 @@ For detailed system architecture and deployment procedures, refer to [BOT_ARCHIT
 
 ## General Development Rules
 
-1. **Backend Deployment**: The backend runs on a remote Ubuntu server (`192.168.10.42`). After modifying backend files (`bot.ts`, `db.ts`, `headless-server.ts`), deploy using the SCP/PM2 procedure documented in BOT_ARCHITECTURE.md.
+1. **Backend Deployment**: The backend runs on a remote Ubuntu server (`YOUR_SERVER_IP`). After modifying backend files (`bot.ts`, `db.ts`, `headless-server.ts`), deploy using the SCP/PM2 procedure documented in DEPLOYMENT.md.
 
 2. **Type Safety**: Always run `npm run typecheck` before deployment to ensure TypeScript compatibility.
 

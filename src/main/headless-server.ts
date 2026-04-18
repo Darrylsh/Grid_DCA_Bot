@@ -61,9 +61,13 @@ async function startHeadless(): Promise<void> {
     res.end('Gridbot Headless Server Running\n')
   })
 
+  const corsOrigin = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+    : '*'
+
   const io = new SocketIOServer(server, {
     cors: {
-      origin: '*', // Allow all origins for the control UI
+      origin: corsOrigin,
       methods: ['GET', 'POST']
     }
   })

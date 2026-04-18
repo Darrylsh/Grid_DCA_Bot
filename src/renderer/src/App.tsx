@@ -27,8 +27,8 @@ export default function App(): React.ReactElement {
     <div className="flex h-screen w-full bg-slate-900 text-slate-100 overflow-hidden font-sans">
       {!isConnected && (
         <div className="absolute top-0 left-0 w-full bg-rose-600 font-bold text-white text-center text-xs py-1.5 z-50 shadow-lg shadow-rose-900/50 flex items-center justify-center gap-2 animate-pulse">
-          <Activity size={14} /> DISCONNECTED FROM HEADLESS SERVER (192.168.10.42:3030) — Dashboard
-          out of sync. Action buttons are disabled.
+          <Activity size={14} /> DISCONNECTED FROM HEADLESS SERVER — Dashboard out of sync. Action
+          buttons are disabled.
         </div>
       )}
       <Sidebar />

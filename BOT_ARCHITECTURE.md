@@ -10,8 +10,8 @@
 The Algobot application was recently decoupled from a monolithic desktop utility into a scalable headless architecture:
 
 - **Electron Frontend (Stateless Dashboard):** Runs on the user's local Windows OS (`algobot-desktop`). It has been completely stripped of its database and exchange logic. It functions strictly as a UI dashboard parsing incoming socket events.
-- **Headless Backend Engine (Remote):** Runs autonomously on an Ubuntu Server (`192.168.10.42`). It executes trades, processes Binance WebSocket feeds, and acts as the sole source of truth natively.
-- **Database (PostgreSQL):** Running remote alongside the headless engine (`Host: 192.168.10.42:5432`, `DB: Gridbot`). Migrated from local SQLite to support concurrent headless read/writes. Handled via `drizzle-orm`.
+- **Headless Backend Engine (Remote):** Runs autonomously on an Ubuntu Server (`YOUR_SERVER_IP`). It executes trades, processes Binance WebSocket feeds, and acts as the sole source of truth natively.
+- **Database (PostgreSQL):** Running remote alongside the headless engine (`Host: YOUR_SERVER_IP:5432`, `DB: Gridbot`). Migrated from local SQLite to support concurrent headless read/writes. Handled via `drizzle-orm`.
 
 ---
 
@@ -19,7 +19,7 @@ The Algobot application was recently decoupled from a monolithic desktop utility
 
 - **`src/main/index.ts` (Electron Main Process):**
   - Boots the `.asar` local desktop wrapper.
-  - Initiates standard `socket.io-client` connection to `process.env.HEADLESS_SERVER_URL` (Defaults to `http://192.168.10.42:3030`).
+  - Initiates standard `socket.io-client` connection to `process.env.HEADLESS_SERVER_URL` (Defaults to `http://YOUR_SERVER_IP:3030`).
   - Manages the bridge translation: Catches IPC requests from the React renderer and wraps them into `socketCall(event, ...args)` payloads to ship over LAN.
 - **`src/preload/index.ts` (Electron Preload):**
   - Exposes `window.api` logic to React securely.
@@ -45,10 +45,10 @@ Whenever `bot.ts`, `db.ts`, or `headless-server.ts` are modified, follow exactly
 1.  **Validate Locally:**
     - Run `npm run typecheck` to ensure no Typescript mismatches.
 2.  **SCP Transport:**
-    - `scp src/main/bot.ts src/main/db.ts src/main/headless-server.ts darryl@192.168.10.42:/home/darryl/bots/gridbot/src/main/`
+    - `scp src/main/bot.ts src/main/db.ts src/main/headless-server.ts YOUR_USERNAME@YOUR_SERVER_IP:/home/YOUR_USERNAME/bots/gridbot/src/main/`
     - _WARNING:_ Do NOT push to `~/algobot-headless/`! The correct daemon resides in `~/bots/gridbot/`.
 3.  **PM2 Daemon Reset:**
-    - `ssh darryl@192.168.10.42 "cd /home/darryl/bots/gridbot && pm2 restart gridbot-headless"`
+    - `ssh YOUR_USERNAME@YOUR_SERVER_IP "cd /home/YOUR_USERNAME/bots/gridbot && pm2 restart gridbot-headless"`
     - Verify the process reboot via `pm2 logs gridbot-headless --lines 10`.
 
 ---

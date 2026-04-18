@@ -40,18 +40,27 @@ BINANCE_API_SECRET=your_api_secret
 DB_USER=trading_bot
 DB_PASS=your_database_password_here
 DB_NAME=Gridbot
-DB_HOST=192.168.10.42
+DB_HOST=your_database_host_here
 DB_PORT=5432
 
 # Backend Server Configuration
 PORT=3030
-HEADLESS_SERVER_URL=http://192.168.10.42:3030
+HEADLESS_SERVER_URL=http://your_server_ip_here:3030
+CORS_ORIGIN=*
 
 # GitHub Token for Auto-Updater Publishing
 # Required only for publishing new releases, not for regular use
 # Permissions needed: "repo" scope
 GH_TOKEN=your_github_token_here
 ```
+
+**Note for Packaged Apps**: When using the packaged application (`.exe`), the `.env` file should be placed in the Electron user data directory:
+
+- **Windows**: `%APPDATA%\algobot-desktop\.env`
+- **macOS**: `~/Library/Application Support/algobot-desktop/.env`
+- **Linux**: `~/.config/algobot-desktop/.env`
+
+The application logs the exact path on startup. During development, `.env` should be in the project root.
 
 ## 🚀 Auto-Updater Setup
 
@@ -114,6 +123,15 @@ The application includes automatic update functionality using `electron-updater`
    # Build and publish
    npm run publish:win
    ```
+
+## 🔒 Security Considerations
+
+- **Environment Variables**: Never commit `.env` file. Ensure `.env` is in `.gitignore`. Use `.env.example` as template. For packaged apps, place `.env` in the Electron user data directory (see Configuration section).
+- **Network Security**: The headless server runs on a private network by default. Exposing it to the internet without authentication could allow unauthorized control. Use firewall rules and consider implementing socket.io authentication if deploying in untrusted networks.
+- **CORS Configuration**: Configure `CORS_ORIGIN` environment variable to restrict which origins can connect to the socket.io server. Default is `*` (allow all). For production, set to the exact origin of your frontend.
+- **Database Credentials**: Use strong passwords and limit database access to trusted IPs.
+- **Binance API Keys**: Use keys with minimal permissions (Spot Trading, Read). Never share your API secret.
+- **Regular Updates**: Keep dependencies updated to address security vulnerabilities.
 
 ## 📜 Commands
 

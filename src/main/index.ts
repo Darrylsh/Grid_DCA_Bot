@@ -46,14 +46,21 @@ process.stdout.write = (
 import { app, shell, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
-import { readFileSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
 import { io as ioClient } from 'socket.io-client'
 import * as dotenv from 'dotenv'
 
-dotenv.config({ path: join(__dirname, '../../.env') })
+const envPath = is.dev ? join(__dirname, '../../.env') : join(app.getPath('userData'), '.env')
+console.log(`[ENV] Loading .env from: ${envPath} (is.dev: ${is.dev})`)
+if (existsSync(envPath)) {
+  dotenv.config({ path: envPath })
+  console.log(`[ENV] Loaded environment variables from ${envPath}`)
+} else {
+  console.warn(`[ENV] .env file not found at ${envPath}. Using default environment variables.`)
+}
 
 // Single instance lock
 if (!app.requestSingleInstanceLock()) {
@@ -70,7 +77,7 @@ app.on('second-instance', () => {
   }
 })
 
-const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://192.168.10.42:3030'
+const SERVER_URL = process.env.HEADLESS_SERVER_URL || 'http://localhost:3030'
 const socket = ioClient(SERVER_URL)
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
