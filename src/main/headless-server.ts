@@ -14,7 +14,7 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error)
 })
 
-import { sendTelegramMessage } from './telegram'
+import { sendTelegramMessage, startTelegramBot } from './telegram'
 
 import {
   botEvents,
@@ -48,7 +48,7 @@ import {
 
 import { runBacktest } from './backtest'
 
-export const BACKEND_VERSION = '1.10.0'
+export const BACKEND_VERSION = '1.11.0'
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
 
@@ -322,6 +322,9 @@ async function startHeadless(): Promise<void> {
     sendTelegramMessage(
       `🚀 Algobot Online\nHeadless server successfully started and listening on port ${PORT}.`
     )
+
+    // Start telegram polling
+    startTelegramBot()
 
     // Start bot logic
     await startBot()

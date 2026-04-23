@@ -1,7 +1,7 @@
 {
   "name": "algobot-desktop",
-  "version": "1.11.1",
-  "expectedBackendVersion": "1.10.0",
+  "version": "1.12.0",
+  "expectedBackendVersion": "1.11.0",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -41,6 +41,7 @@
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.7.0",
+    "node-telegram-bot-api": "^0.67.0",
     "pg": "^8.20.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
@@ -51,6 +52,7 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22.19.1",
+    "@types/node-telegram-bot-api": "^0.64.14",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

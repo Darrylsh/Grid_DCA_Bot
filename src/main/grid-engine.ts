@@ -97,8 +97,8 @@ export const executeGridBuy = async (symbol: string, currentPrice: number): Prom
       `[GRID] ${symbol}: Insufficient USDT (${balances.USDT.toFixed(2)} < ${shareAmount}). Skipping grid buy.`
     )
     const now = Date.now()
-    const COOLDOWN_1H = 60 * 60 * 1000
-    if (now - (getMissedBuyCooldown(symbol) || 0) > COOLDOWN_1H) {
+    const COOLDOWN_MISSEDBUY = 4 * 60 * 60 * 1000
+    if (now - (getMissedBuyCooldown(symbol) || 0) > COOLDOWN_MISSEDBUY) {
       sendTelegramMessage(
         `🚨 Missed Buy (${symbol})\nAttempted grid buy @ $${currentPrice.toFixed(4)}, but USDT balance is too low ($${balances.USDT.toFixed(2)} < $${shareAmount.toFixed(2)}).`
       )
